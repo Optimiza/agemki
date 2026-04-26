@@ -1,12 +1,13 @@
 import { create } from 'zustand'
 
 export const NODE_TYPES = {
-  LINE:    'line',      // NPC or protagonist says something
-  CHOICE:  'choice',   // Player picks from options
-  BRANCH:  'branch',   // Condition check (flag)
-  ACTION:  'action',   // Script call / give item / set flag
-  JUMP:    'jump',     // Jump to another node or dialogue
-  END:     'end',      // Dialogue ends
+  START:   'start',    // Entry point — always first; one output, no content
+  LINE:    'line',     // NPC or protagonist says something
+  CHOICE:  'choice',  // Player picks from options
+  BRANCH:  'branch',  // Condition check (flag)
+  ACTION:  'action',  // Script call / give item / set flag
+  JUMP:    'jump',    // Jump to another node or dialogue
+  END:     'end',     // Dialogue ends
 }
 
 export const useDialogueStore = create((set, get) => ({
@@ -84,10 +85,12 @@ export const useDialogueStore = create((set, get) => ({
 
   updateNode: (nodeId, partial) => set(s => {
     if (!s.activeDialogue) return {}
+    const { _connections, ...nodePartial } = partial
     return {
       activeDialogue: {
         ...s.activeDialogue,
-        nodes: s.activeDialogue.nodes.map(n => n.id === nodeId ? { ...n, ...partial } : n),
+        nodes: s.activeDialogue.nodes.map(n => n.id === nodeId ? { ...n, ...nodePartial } : n),
+        ...(_connections ? { connections: _connections } : {}),
       },
       dirty: true,
     }
@@ -168,12 +171,14 @@ export const useDialogueStore = create((set, get) => ({
 function makeDefaultNode(id, type) {
   const base = { id, type, _x: 100, _y: 100 }
   switch (type) {
+    case NODE_TYPES.START:
+      return { ...base, _x: 100, _y: 20 }
     case NODE_TYPES.LINE:
-      return { ...base, actorId: null, textKey: `dlg.${id}.text`, animation: null }
+      return { ...base, actorId: null, textKey: `dlg.${id}.text`, animation: null, charFilter: null }
     case NODE_TYPES.CHOICE:
       return { ...base, promptKey: `dlg.${id}.prompt`, choices: [
-        { id: `ch_${Date.now()}_0`, textKey: `dlg.${id}.ch0`, condition: null },
-        { id: `ch_${Date.now()}_1`, textKey: `dlg.${id}.ch1`, condition: null },
+        { id: `ch_${Date.now()}_0`, textKey: `dlg.${id}.ch0`, condition: null, charFilter: null },
+        { id: `ch_${Date.now()}_1`, textKey: `dlg.${id}.ch1`, condition: null, charFilter: null },
       ]}
     case NODE_TYPES.BRANCH:
       return { ...base, flag: '', operator: 'is_true', valueTrue: null, valueFalse: null }

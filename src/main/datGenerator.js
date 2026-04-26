@@ -1110,11 +1110,13 @@ export async function generateDats(gameDir, buildDir, log) {
     const blocks = []
     const audioDir = join(gameDir, 'audio')
 
-    if (existsSync(audioDir)) {
-      for (const f of readdirSync(audioDir)) {
+    // Escanea un directorio plano añadiendo MIDIs y WAVs al array de bloques
+    const _scanAudioDir = (dir) => {
+      if (!existsSync(dir)) return
+      for (const f of readdirSync(dir)) {
         const lower = f.toLowerCase()
         try {
-          const data = readFileSync(join(audioDir, f))
+          const data = readFileSync(join(dir, f))
           if (lower.endsWith('.mid') || lower.endsWith('.midi')) {
             blocks.push({ id: f.replace(/\.(mid|midi)$/i, ''), resType: RES_TYPE.MIDI, data })
             safeLog(`  MIDI: ${f}`)
@@ -1125,6 +1127,13 @@ export async function generateDats(gameDir, buildDir, log) {
         } catch (e) { errors.push(`Audio ${f}: ${e.message}`) }
       }
     }
+
+    // Raíz audio/ + subdirectorios midi/, music/, sfx/, voice/
+    _scanAudioDir(audioDir)
+    _scanAudioDir(join(audioDir, 'midi'))
+    _scanAudioDir(join(audioDir, 'music'))
+    _scanAudioDir(join(audioDir, 'sfx'))
+    _scanAudioDir(join(audioDir, 'voice'))
 
     if (blocks.length === 0) {
       safeLog('  (sin audio en el proyecto — DAT vacío)', 'warn')

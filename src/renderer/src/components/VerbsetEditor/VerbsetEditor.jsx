@@ -115,6 +115,12 @@ function VerbRow({ verb, index, total, langs, locales, palette, onUpdate, onDele
             onChange={e => onUpdate({ isPickup: e.target.checked })} />
           <span>🎒 Coger</span>
         </label>
+        <label className={`flag-toggle ${verb.isGive ? 'active' : ''}`}
+          title="Verbo dar: seleccionar objeto inventario → esperar personaje objetivo. Party: transferencia automática. NPC: ejecuta handler engine_on_verb_inv.">
+          <input type="checkbox" checked={!!verb.isGive}
+            onChange={e => onUpdate({ isGive: e.target.checked })} />
+          <span>🤝 Dar</span>
+        </label>
       </div>
 
       {/* Colores de texto */}
@@ -147,6 +153,7 @@ function VerbsetPanel({ gameDir, palette }) {
     setVerbLabel, saveActiveVerbset, closeVerbset,
   } = useVerbsetStore()
   const { langs, activeLang, setActiveLang, locales } = useLocaleStore()
+  const [activeTab, setActiveTab] = useState('verbos')
 
   if (!activeVerbset) return (
     <div className="vs-panel vs-panel--empty">
@@ -199,26 +206,70 @@ function VerbsetPanel({ gameDir, palette }) {
         </div>
       )}
 
-      {/* Preview */}
-      <VerbsetPreview verbset={activeVerbset} locales={locales} activeLang={activeLang} />
-
-      {/* Lista */}
-      <div className="vs-panel__section-title">
-        Verbos ({activeVerbset.verbs.length})
-        <span className="vs-panel__section-hint"> — labels por idioma · clave: <code>verb.ID</code></span>
+      {/* Tabs */}
+      <div className="vs-tabs">
+        <button className={`vs-tab ${activeTab === 'verbos' ? 'vs-tab--active' : ''}`}
+          onClick={() => setActiveTab('verbos')}>
+          Verbos ({activeVerbset.verbs.length})
+        </button>
+        <button className={`vs-tab ${activeTab === 'defaults' ? 'vs-tab--active' : ''}`}
+          onClick={() => setActiveTab('defaults')}>
+          Respuestas por defecto
+        </button>
       </div>
 
-      <div className="vs-verbs-list">
-        {sorted.map((verb, i) => (
-          <VerbRow key={verb.id} verb={verb} index={i} total={sorted.length}
-            langs={langs} locales={locales} palette={palette}
-            onUpdate={patch => updateVerb(verb.id, patch)}
-            onDelete={() => deleteVerb(verb.id)}
-            onMove={dir => moveVerb(verb.id, dir)}
-            onSetLabel={(id, lang, label) => setVerbLabel(id, lang, label)} />
-        ))}
-      </div>
+      {/* Tab: Vista previa + Lista de verbos */}
+      {activeTab === 'verbos' && (
+        <>
+          <VerbsetPreview verbset={activeVerbset} locales={locales} activeLang={activeLang} />
+          <div className="vs-panel__section-hint" style={{ marginBottom: 8 }}>
+            Labels por idioma · clave: <code>verb.ID</code>
+          </div>
+          <div className="vs-verbs-list">
+            {sorted.map((verb, i) => (
+              <VerbRow key={verb.id} verb={verb} index={i} total={sorted.length}
+                langs={langs} locales={locales} palette={palette}
+                onUpdate={patch => updateVerb(verb.id, patch)}
+                onDelete={() => deleteVerb(verb.id)}
+                onMove={dir => moveVerb(verb.id, dir)}
+                onSetLabel={(id, lang, label) => setVerbLabel(id, lang, label)} />
+            ))}
+          </div>
+        </>
+      )}
 
+      {/* Tab: Respuestas por defecto */}
+      {activeTab === 'defaults' && (
+        <>
+          <div className="vs-panel__section-hint" style={{ marginBottom: 8 }}>
+            Si el objeto no tiene respuesta propia · clave: <code>verb.{activeVerbset.id}.ID.default</code>
+          </div>
+          <div className="vs-defaults-list">
+            {sorted.filter(v => !v.isMovement).map(verb => (
+              <div key={verb.id} className="vs-default-row">
+                <span className="vs-default-row__icon">{verb.icon || '❓'}</span>
+                <span className="vs-default-row__label">
+                  {(locales[activeLang] || {})[`verb.${verb.id}`] || verb.id}
+                </span>
+                <div className="vs-default-row__inputs">
+                  {langs.map(lang => {
+                    const key = `verb.${activeVerbset.id}.${verb.id}.default`
+                    return (
+                      <div key={lang} className="vs-default-row__lang">
+                        <span className="lang-badge">{lang.toUpperCase()}</span>
+                        <input type="text"
+                          value={(locales[lang] || {})[key] || ''}
+                          onChange={e => setVerbLabel(`${activeVerbset.id}.${verb.id}.default`, lang, e.target.value)}
+                          placeholder={`Respuesta en ${lang}…`} />
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
 
     </div>
   )

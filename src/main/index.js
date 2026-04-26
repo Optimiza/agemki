@@ -611,7 +611,7 @@ ipcMain.handle('verbset:create', async (_event, { gameDir, name }) => {
       { id: `${vsId}_empujar`, icon: '👉',  isMovement: false, isDefault: false, approachObject: true,  order: 5 },
       { id: `${vsId}_tirar`,   icon: '👈',  isMovement: false, isDefault: false, approachObject: true,  order: 6 },
       { id: `${vsId}_hablar`,  icon: '💬',  isMovement: false, isDefault: false, approachObject: true,  order: 7 },
-      { id: `${vsId}_dar`,     icon: '🤝',  isMovement: false, isDefault: false, approachObject: true,  order: 8 },
+      { id: `${vsId}_dar`,     icon: '🤝',  isMovement: false, isDefault: false, approachObject: false, isGive: true, order: 8 },
       { id: `${vsId}_ira`,     icon: '👟',  isMovement: true,  isDefault: false, approachObject: false, order: 9 },
     ]
     const verbset = { id: vsId, name, verbs, created: now, modified: now }
@@ -933,14 +933,19 @@ ipcMain.handle('dialogue:create', (_event, { gameDir, name }) => {
     const dir = join(gameDir, 'dialogues')
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true })
     const id      = `dlg_${Date.now()}`
-    const startId = 'node_start'
+    const startId = `start_${Date.now()}`
+    const line1Id = `node_${Date.now()}_l`
     const dialogue = {
       id, name: name || 'Nuevo diálogo', actorId: null,
       nodes: [
-        { id: startId,    type: 'line', actorId: null, textKey: `dlg.${id}.start`, _x: 300, _y:  80 },
-        { id: 'node_end', type: 'end',  _x: 300, _y: 240 },
+        { id: startId, type: 'start', _x: 300, _y: 20 },
+        { id: line1Id, type: 'line',  actorId: null, textKey: `dlg.${id}.line1`, _x: 300, _y: 130 },
+        { id: 'node_end', type: 'end', _x: 300, _y: 260 },
       ],
-      connections: [{ from: startId, to: 'node_end', choiceIndex: null }],
+      connections: [
+        { from: startId, to: line1Id,    choiceIndex: null },
+        { from: line1Id, to: 'node_end', choiceIndex: null },
+      ],
       created:  new Date().toISOString().slice(0, 10),
       modified: new Date().toISOString().slice(0, 10),
     }
@@ -2500,6 +2505,13 @@ async function generateMainC(gameDir, audioDriver) {
     if (r) rooms[id] = r
   }
 
+  const verbsetFiles = safeReaddir(path_m.join(gameDir, 'verbsets')).filter(f => f.endsWith('.json'))
+  const verbsetsMap = {}
+  for (const f of verbsetFiles) {
+    const vs = safeRead(path_m.join(gameDir, 'verbsets', f))
+    if (vs) verbsetsMap[vs.id] = vs
+  }
+
   const seqIds = safeReaddir(path_m.join(gameDir, 'sequences'))
     .filter(f => f.endsWith('.json')).map(f => f.replace('.json',''))
   const sequences = {}
@@ -2565,6 +2577,7 @@ async function generateMainC(gameDir, audioDriver) {
       { role: 'talk_left',  fallback: 'talk' },
       { role: 'talk_up',    fallback: 'talk' },
       { role: 'talk_down',  fallback: 'talk' },
+      { role: 'give',       fallback: 'talk' },
     ]
 
     for (const { role, fallback } of ROLE_DEFS) {
@@ -2647,7 +2660,7 @@ async function generateMainC(gameDir, audioDriver) {
   // ── Helper: resuelve ID de animación JSON → nombre de rol del motor ──────────
   // El motor solo conoce roles ("idle","walk_right",...). Los IDs como
   // "anim_1774xxx" son del editor y se mapean via ch.animRoles en compile-time.
-  const ANIM_ROLE_NAMES = ['idle','walk_right','walk_left','walk_up','walk_down','idle_up','idle_down','talk','talk_left','talk_up','talk_down']
+  const ANIM_ROLE_NAMES = ['idle','walk_right','walk_left','walk_up','walk_down','idle_up','idle_down','talk','talk_left','talk_up','talk_down','give']
   function resolveAnimRole(charId, animId) {
     if (!animId) return animId
     if (ANIM_ROLE_NAMES.includes(animId)) return animId  // ya es un nombre de rol
@@ -2689,6 +2702,12 @@ async function generateMainC(gameDir, audioDriver) {
       case 'CHANGE_ROOM':
         e(`${p}engine_change_room("${cStr(instr.roomId)}", "${cStr(instr.entryId || 'entry_default')}");`)
         break
+      case 'ENTER_CLOSEUP':
+        e(`${p}engine_enter_closeup("${cStr(instr.roomId)}", ${instr.showUi ? 1 : 0});`)
+        break
+      case 'EXIT_CLOSEUP':
+        e(`${p}engine_exit_closeup();`)
+        break
       case 'SET_CHAR_ROOM_POS': {
         const _dir = instr.direction || 'right'
         const _anim = instr.animName || ''
@@ -2723,6 +2742,8 @@ async function generateMainC(gameDir, audioDriver) {
             e(`${p}engine_set_char_talk_anim_up("${cStr(instr.charId)}", ${_pfx}_TALK_UP_PCX, ${_pfx}_TALK_UP_FRAMES, ${_pfx}_TALK_UP_FPS, ${_pfx}_TALK_UP_FW);`)
           if (_chDef.animRoles?.talk_down)
             e(`${p}engine_set_char_talk_anim_down("${cStr(instr.charId)}", ${_pfx}_TALK_DOWN_PCX, ${_pfx}_TALK_DOWN_FRAMES, ${_pfx}_TALK_DOWN_FPS, ${_pfx}_TALK_DOWN_FW);`)
+          if (_chDef.animRoles?.give)
+            e(`${p}engine_set_char_give_anim("${cStr(instr.charId)}", ${_pfx}_GIVE_PCX, ${_pfx}_GIVE_FRAMES, ${_pfx}_GIVE_FPS, ${_pfx}_GIVE_FW);`)
         } else {
           // Personaje no definido en el proyecto — fallback a teleport simple
           e(`${p}if (!engine_char_in_room("${cStr(instr.charId)}")) {`)
@@ -2824,9 +2845,13 @@ async function generateMainC(gameDir, audioDriver) {
       case 'SET_EXIT_STATE':
         e(`${p}engine_set_exit_enabled("${cStr(instr.exitId)}", ${instr.enabled ? 1 : 0});`)
         break
-      case 'SET_VERBSET':
+      case 'SET_VERBSET': {
         e(`${p}engine_set_verbset("${cStr(instr.verbsetId)}");`)
+        const _svVs = verbsetsMap[instr.verbsetId]
+        for (const _svV of (_svVs?.verbs || []))
+          if (_svV.isGive) e(`${p}engine_set_give_verb("${cStr(_svV.id)}");`)
         break
+      }
       case 'START_DIALOGUE':
         e(`${p}dlg_${cId(instr.dialogueId)}();`)
         break
@@ -2910,22 +2935,56 @@ async function generateMainC(gameDir, audioDriver) {
     const objDef = objects[objId]
     if (!objDef) continue
     for (const vr of (objDef.verbResponses || [])) {
-      if (!vr.verbId || vr.mode !== 'text') continue
+      if (!vr.verbId) continue
+      // Char-specific text say functions
+      for (const cr of (vr.charResponses || [])) {
+        if (!cr.charId || cr.mode !== 'text') continue
+        const crKey = `obj.${objId}.verb.${vr.verbId}.${cr.charId}`
+        e(`static void say_${cId(objId)}_verb_${cId(vr.verbId)}_${cId(cr.charId)}(void) {`)
+        e(`    engine_say(NULL, "${crKey}");`)
+        e(`}`)
+        e(``)
+      }
+      // Generic text say function
+      if (vr.mode !== 'text') continue
       e(`static void say_${cId(objId)}_verb_${cId(vr.verbId)}(void) {`)
       if (vr.sayAnim)
         e(`    engine_say_anim(NULL, "obj.${objId}.verb.${vr.verbId}", "${cStr(vr.sayAnim)}");`)
       else
         e(`    engine_say(NULL, "obj.${objId}.verb.${vr.verbId}");`)
+      for (let ei = 0; ei < (vr.extraLines || []).length; ei++) {
+        const el = vr.extraLines[ei]
+        if (el.sayAnim)
+          e(`    engine_say_anim(NULL, "obj.${objId}.verb.${vr.verbId}.e${ei}", "${cStr(el.sayAnim)}");`)
+        else
+          e(`    engine_say(NULL, "obj.${objId}.verb.${vr.verbId}.e${ei}");`)
+      }
       e(`}`)
       e(``)
     }
     for (const vr of (objDef.invVerbResponses || [])) {
-      if (!vr.verbId || vr.mode !== 'text') continue
+      if (!vr.verbId) continue
+      for (const cr of (vr.charResponses || [])) {
+        if (!cr.charId || cr.mode !== 'text') continue
+        const crKey = `obj.${objId}.inv_verb.${vr.verbId}.${cr.charId}`
+        e(`static void say_${cId(objId)}_invverb_${cId(vr.verbId)}_${cId(cr.charId)}(void) {`)
+        e(`    engine_say(NULL, "${crKey}");`)
+        e(`}`)
+        e(``)
+      }
+      if (vr.mode !== 'text') continue
       e(`static void say_${cId(objId)}_invverb_${cId(vr.verbId)}(void) {`)
       if (vr.sayAnim)
         e(`    engine_say_anim(NULL, "obj.${objId}.inv_verb.${vr.verbId}", "${cStr(vr.sayAnim)}");`)
       else
         e(`    engine_say(NULL, "obj.${objId}.inv_verb.${vr.verbId}");`)
+      for (let ei = 0; ei < (vr.extraLines || []).length; ei++) {
+        const el = vr.extraLines[ei]
+        if (el.sayAnim)
+          e(`    engine_say_anim(NULL, "obj.${objId}.inv_verb.${vr.verbId}.e${ei}", "${cStr(el.sayAnim)}");`)
+        else
+          e(`    engine_say(NULL, "obj.${objId}.inv_verb.${vr.verbId}.e${ei}");`)
+      }
       e(`}`)
       e(``)
     }
@@ -2971,21 +3030,23 @@ async function generateMainC(gameDir, audioDriver) {
         const textKey = node.textKey || node.text_key || ''
         const anim = resolveDialogAnim(speaker, node.animation || '')
         const dir  = resolveDialogAnim(speaker, node.direction || '')
-        if (textKey) lines.push({ speaker, textKey, anim, dir })
+        const cf   = node.charFilter || ''
+        if (textKey) lines.push({ speaker, textKey, anim, dir, charFilter: cf })
         for (const extra of (node.extraLines || [])) {
           const exSpeaker = extra.actorId || extra.speakerId || ''
           lines.push({
             speaker: exSpeaker,
             textKey: extra.textKey || '',
             anim: resolveDialogAnim(exSpeaker, extra.animation || ''),
-            dir: resolveDialogAnim(exSpeaker, extra.direction || '')
+            dir: resolveDialogAnim(exSpeaker, extra.direction || ''),
+            charFilter: extra.charFilter || ''
           })
         }
       }
       const linesStr = lines.map(l =>
-        `{ "${cStr(l.speaker)}", "${cStr(l.textKey)}", "${cStr(l.anim)}", "${cStr(l.dir)}" }`
+        `{ "${cStr(l.speaker)}", "${cStr(l.textKey)}", "${cStr(l.anim)}", "${cStr(l.dir)}", "${cStr(l.charFilter||'')}" }`
       ).join(', ')
-      const linesInit = linesStr || '{ "", "", "", "" }'
+      const linesInit = linesStr || '{ "", "", "", "", "" }'
       const numLines = lines.length
       /* Construir options */
       let opts, numOpts
@@ -2993,13 +3054,16 @@ async function generateMainC(gameDir, audioDriver) {
         const choiceOpts = node.choices.map((ch, ci) => {
           const conn = nodeConns.find(c => c.choiceIndex === ci)
           const nextId = conn ? conn.to : ''
-          return `{ "${cStr(ch.textKey||ch.text||'')}", "", "${cStr(nextId)}" }`
+          const condStr = ch.condition && typeof ch.condition === 'object'
+            ? JSON.stringify(ch.condition)
+            : (ch.condition || '')
+          return `{ "${cStr(ch.textKey||ch.text||'')}", "${cStr(condStr)}", "${cStr(nextId)}", "${cStr(ch.charFilter||'')}" }`
         })
         opts = choiceOpts.join(', ')
         numOpts = node.choices.length
       } else if (nodeConns.length > 0) {
         const nextId = nodeConns[0].to
-        opts = `{ "", "", "${cStr(nextId)}" }`
+        opts = `{ "", "", "${cStr(nextId)}", "" }`
         numOpts = 1
       } else {
         opts = '{0}'
@@ -3008,7 +3072,12 @@ async function generateMainC(gameDir, audioDriver) {
       e(`        { "${cStr(node.id)}", { ${linesInit} }, ${numLines}, { ${opts} }, ${numOpts} },`)
     }
     e(`    };`)
-    e(`    engine_run_dialogue(nodes_${cId(id)}, ${nodes.length}, "${cStr(nodes[0]?.id || '')}");`)
+    const _startNode = nodes.find(n => n.type === 'start') || nodes[0]
+    if (dlg.colors) {
+      const dc = dlg.colors
+      e(`    engine_set_dialogue_colors(${dc.bg|0}, ${dc.brd|0}, ${dc.txt|0}, ${dc.sel|0});`)
+    }
+    e(`    engine_run_dialogue(nodes_${cId(id)}, ${nodes.length}, "${cStr(_startNode?.id || '')}");`)
     e('}')
     e('')
   }
@@ -3070,6 +3139,12 @@ async function generateMainC(gameDir, audioDriver) {
         }
         case 'load_room':
           e(`    engine_change_room("${cStr(step.roomId||'')}", "${cStr(step.entryId||'entry_default')}");`)
+          break
+        case 'enter_closeup':
+          e(`    engine_enter_closeup("${cStr(step.roomId||'')}", ${step.showUi ? 1 : 0});`)
+          break
+        case 'exit_closeup':
+          e(`    engine_exit_closeup();`)
           break
         case 'play_midi': {
           const _mf = (step.midiId||'').replace(/^midi:/i,'')
@@ -3539,6 +3614,9 @@ async function generateMainC(gameDir, audioDriver) {
       if (chDef.animRoles?.talk_down) {
         e(`    engine_set_char_talk_anim_down("${cStr(ch.charId)}", ${pfxTalk}_TALK_DOWN_PCX, ${pfxTalk}_TALK_DOWN_FRAMES, ${pfxTalk}_TALK_DOWN_FPS, ${pfxTalk}_TALK_DOWN_FW);`)
       }
+      if (chDef.animRoles?.give) {
+        e(`    engine_set_char_give_anim("${cStr(ch.charId)}", ${pfxTalk}_GIVE_PCX, ${pfxTalk}_GIVE_FRAMES, ${pfxTalk}_GIVE_FPS, ${pfxTalk}_GIVE_FW);`)
+      }
     } else {
       e(`    engine_place_char("${cStr(ch.charId)}", ${ch.x|0}, ${ch.y|0},`)
       e(`        "", 1, 8, 0,  "", 1, 8, 0,  "", 1, 8, 0, 0,  "", 1, 8, 0,  "", 1, 8, 0,  "", 1, 8, 0,  "", 1, 8, 0,  2, 0);`)
@@ -3568,10 +3646,14 @@ async function generateMainC(gameDir, audioDriver) {
     }
 
     // MIDI de la room — se lanza al entrar; loop=1 por defecto salvo que esté desmarcado
+    // midiCont=true → engine_play_midi_cont (no reinicia si ya suena la misma pista)
     if (room.audio?.midi) {
       const midiBase = room.audio.midi.replace(/\.[^.]+$/, '').replace(/[^a-zA-Z0-9_]/g, '_').slice(0, 27)
       const loopFlag = room.audio.loop !== false ? 1 : 0
-      e(`    engine_play_midi_loop("mid_${midiBase}", ${loopFlag});`)
+      const fn = room.audio.midiCont ? 'engine_play_midi_cont' : 'engine_play_midi_loop'
+      e(`    ${fn}("mid_${midiBase}", ${loopFlag});`)
+    } else {
+      e(`    engine_stop_midi();`)
     }
 
     // Scripts de esta room (triggers room_load, room_enter, room_enter_via, room_exit)
@@ -3671,26 +3753,41 @@ async function generateMainC(gameDir, audioDriver) {
     const objDef = objects[objId]
     if (!objDef) continue
     for (const vr of (objDef.verbResponses || [])) {
-      if (!vr.verbId || vr.mode !== 'script' || !vr.scriptId) continue
-      if (scripts[vr.scriptId])
+      if (!vr.verbId) continue
+      // Respuestas char-específicas primero (mayor prioridad en dispatch)
+      for (const cr of (vr.charResponses || [])) {
+        if (!cr.charId) continue
+        if (cr.mode === 'script' && cr.scriptId && scripts[cr.scriptId])
+          e(`    engine_on_verb_object_char("${cStr(vr.verbId)}", "${cStr(objId)}", "${cStr(cr.charId)}", scr_${cId(cr.scriptId)});`)
+        else if (cr.mode === 'text')
+          e(`    engine_on_verb_object_char("${cStr(vr.verbId)}", "${cStr(objId)}", "${cStr(cr.charId)}", say_${cId(objId)}_verb_${cId(vr.verbId)}_${cId(cr.charId)});`)
+      }
+      // Respuesta genérica (fallback)
+      if (vr.mode === 'script' && vr.scriptId && scripts[vr.scriptId])
         e(`    engine_on_verb_object("${cStr(vr.verbId)}", "${cStr(objId)}", scr_${cId(vr.scriptId)});`)
-    }
-    for (const vr of (objDef.verbResponses || [])) {
-      if (!vr.verbId || vr.mode !== 'text') continue
-      e(`    engine_on_verb_object("${cStr(vr.verbId)}", "${cStr(objId)}", say_${cId(objId)}_verb_${cId(vr.verbId)});`)
+      else if (vr.mode === 'text')
+        e(`    engine_on_verb_object("${cStr(vr.verbId)}", "${cStr(objId)}", say_${cId(objId)}_verb_${cId(vr.verbId)});`)
     }
     for (const vr of (objDef.invVerbResponses || [])) {
-      if (!vr.verbId || vr.mode !== 'script' || !vr.scriptId) continue
-      if (scripts[vr.scriptId])
+      if (!vr.verbId) continue
+      for (const cr of (vr.charResponses || [])) {
+        if (!cr.charId) continue
+        if (cr.mode === 'script' && cr.scriptId && scripts[cr.scriptId])
+          e(`    engine_on_verb_inv_char("${cStr(vr.verbId)}", "${cStr(objId)}", "${cStr(cr.charId)}", scr_${cId(cr.scriptId)});`)
+        else if (cr.mode === 'text')
+          e(`    engine_on_verb_inv_char("${cStr(vr.verbId)}", "${cStr(objId)}", "${cStr(cr.charId)}", say_${cId(objId)}_invverb_${cId(vr.verbId)}_${cId(cr.charId)});`)
+      }
+      if (vr.mode === 'script' && vr.scriptId && scripts[vr.scriptId])
         e(`    engine_on_verb_inv("${cStr(vr.verbId)}", "${cStr(objId)}", scr_${cId(vr.scriptId)});`)
-    }
-    for (const vr of (objDef.invVerbResponses || [])) {
-      if (!vr.verbId || vr.mode !== 'text') continue
-      e(`    engine_on_verb_inv("${cStr(vr.verbId)}", "${cStr(objId)}", say_${cId(objId)}_invverb_${cId(vr.verbId)});`)
+      else if (vr.mode === 'text')
+        e(`    engine_on_verb_inv("${cStr(vr.verbId)}", "${cStr(objId)}", say_${cId(objId)}_invverb_${cId(vr.verbId)});`)
     }
     for (const c of (objDef.combinations || [])) {
       if (!c.scriptId || !scripts[c.scriptId]) continue
-      e(`    engine_on_usar_con("${cStr(objId)}", "${cStr(c.withId || '')}", scr_${cId(c.scriptId)}, ${c.requireBothInv ? 1 : 0});`)
+      if (c.charId)
+        e(`    engine_on_usar_con_char("${cStr(objId)}", "${cStr(c.withId || '')}", "${cStr(c.charId)}", scr_${cId(c.scriptId)}, ${c.requireBothInv ? 1 : 0});`)
+      else
+        e(`    engine_on_usar_con("${cStr(objId)}", "${cStr(c.withId || '')}", scr_${cId(c.scriptId)}, ${c.requireBothInv ? 1 : 0});`)
     }
   }
   e('}')
@@ -3731,6 +3828,12 @@ async function generateMainC(gameDir, audioDriver) {
   const startVerbset = game.activeVerbSet || ''
   if (startVerbset) {
     e(`    engine_set_verbset("${cStr(startVerbset)}");`)
+    // Registrar verbos dar de todos los verbsets
+    for (const _vs of Object.values(verbsetsMap)) {
+      for (const _vv of (_vs.verbs || [])) {
+        if (_vv.isGive) e(`    engine_set_give_verb("${cStr(_vv.id)}");`)
+      }
+    }
   }
 
   e(`    engine_set_room_table(g_rooms);`)
@@ -3820,7 +3923,7 @@ async function generateMainC(gameDir, audioDriver) {
           e(`    engine_set_char_face_sprite("${cStr(id)}", "${cStr(faceId)}");`)
         }
       }
-      // Colores del popup (de game.json -> partyPopup)
+      // Colores del popup de party (de game.json -> partyPopup)
       const pp = game.partyPopup || {}
       const hasCols = pp.colorBg !== undefined || pp.colorBorder !== undefined
                    || pp.colorActive !== undefined || pp.colorHover !== undefined
@@ -3830,6 +3933,28 @@ async function generateMainC(gameDir, audioDriver) {
         const active = pp.colorActive ?? 8
         const hover  = pp.colorHover  ?? 4
         e(`    engine_set_party_popup_colors(${bg}, ${border}, ${active}, ${hover});`)
+      }
+      // Colores por defecto del panel de dialogos (de game.json -> dialogueColors)
+      const dc = game.dialogueColors || {}
+      const hasDlgCols = dc.colorBg !== undefined || dc.colorBrd !== undefined
+                      || dc.colorTxt !== undefined || dc.colorSel !== undefined
+      if (hasDlgCols) {
+        e(`    engine_set_dialogue_colors(${dc.colorBg ?? 16}, ${dc.colorBrd ?? 0}, ${dc.colorTxt ?? 15}, ${dc.colorSel ?? 26});`)
+      }
+      // Colores del menu de juego / barra de verbos (de game.json -> uiColors)
+      const uc = game.uiColors || {}
+      const hasUiCols = uc.colorBg !== undefined || uc.colorAction !== undefined
+                     || uc.colorSel !== undefined || uc.colorInvHov !== undefined
+      if (hasUiCols) {
+        e(`    engine_set_ui_colors(${uc.colorBg ?? 1}, ${uc.colorAction ?? 15}, ${uc.colorSel ?? 14}, ${uc.colorInvHov ?? 8});`)
+      }
+      // Colores del menu ESC/pausa (de game.json -> menuColors)
+      const mc = game.menuColors || {}
+      const hasMenuCols = mc.colorBg !== undefined || mc.colorBtn !== undefined
+                       || mc.colorSel !== undefined || mc.colorBrd !== undefined
+                       || mc.colorTxt !== undefined || mc.colorAct !== undefined
+      if (hasMenuCols) {
+        e(`    engine_set_menu_colors(${mc.colorBg ?? 16}, ${mc.colorBtn ?? 20}, ${mc.colorSel ?? 26}, ${mc.colorBrd ?? 0}, ${mc.colorTxt ?? 15}, ${mc.colorAct ?? 12});`)
       }
       e('')
     }

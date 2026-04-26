@@ -158,6 +158,11 @@ export const INSTR = {
     {k:'enabled', t:'bool'},
   ] },
 
+  // Entra en una room de primer plano sin protagonista; guarda la room actual para volver.
+  ENTER_CLOSEUP: { cat:'room', label:'Entrar closeup (sin protagonista)', fields:[{k:'roomId',t:'room'},{k:'showUi',t:'bool',ph:'mostrar UI de verbos'}] },
+  // Regresa a la room guardada por ENTER_CLOSEUP, reinyectando el protagonista en su posición anterior.
+  EXIT_CLOSEUP:  { cat:'room', label:'Salir closeup (volver a room anterior)', fields:[] },
+
   // ── Diálogo y texto ───────────────────────────────────────────────────────
 
   START_DIALOGUE: { cat:'dialog', label:'Iniciar diálogo', fields:[{k:'dialogueId',t:'dialogue'}] },

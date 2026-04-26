@@ -49,18 +49,21 @@ import { useAppStore } from '../../store/appStore'
 import { useDialogueStore, NODE_TYPES } from '../../store/dialogueStore'
 import { useCharStore } from '../../store/charStore'
 import { useLocaleStore } from '../../store/localeStore'
+import { useObjectStore } from '../../store/objectStore'
+import PalettePicker from '../shared/PalettePicker'
 import './DialogueEditor.css'
 
 // ── Metadatos visuales de los tipos de nodo ───────────────────────────────────
 // Cada tipo tiene color propio para la barra superior del nodo y las conexiones.
 /** @type {Record<string, {label:string, color:string, icon:string}>} */
 const NODE_META = {
-  line:   { label: 'Línea',     color: '#3b82f6', icon: '💬' }, // azul
-  choice: { label: 'Opciones',  color: '#8b5cf6', icon: '🔀' }, // violeta
-  branch: { label: 'Condición', color: '#f59e0b', icon: '⟨⟩' }, // ámbar
-  action: { label: 'Acción',    color: '#10b981', icon: '⚙'  }, // verde
-  jump:   { label: 'Salto',     color: '#6366f1', icon: '↗'  }, // índigo
-  end:    { label: 'Fin',       color: '#ef4444', icon: '■'  }, // rojo
+  start:  { label: 'Inicio',    color: '#22c55e', icon: '▶',  palette: false }, // verde — único por diálogo
+  line:   { label: 'Línea',     color: '#3b82f6', icon: '💬', palette: true  },
+  choice: { label: 'Opciones',  color: '#8b5cf6', icon: '🔀', palette: true  },
+  branch: { label: 'Condición', color: '#f59e0b', icon: '⟨⟩', palette: true  },
+  action: { label: 'Acción',    color: '#10b981', icon: '⚙',  palette: true  },
+  jump:   { label: 'Salto',     color: '#6366f1', icon: '↗',  palette: true  },
+  end:    { label: 'Fin',       color: '#ef4444', icon: '■',  palette: true  },
 }
 
 // ── DialogueLibrary ───────────────────────────────────────────────────────────
@@ -171,7 +174,9 @@ const NODE_H = 72   // alto del nodo en px
  */
 function NodeGraph({ dialogue, onSelectNode, selectedNodeId, locales, activeLang }) {
   const canvasRef = useRef(null)
-  const { setNodePosition, connectNodes } = useDialogueStore()
+  const { setNodePosition, connectNodes, disconnectNode } = useDialogueStore()
+  // dragRef: null | { type:'move', nodeId, offX, offY }
+  //                | { type:'connect', fromId, choiceIndex, mx, my }
   const dragRef   = useRef(null)
   const [, forceUpdate] = useState(0)
 
@@ -231,6 +236,23 @@ function NodeGraph({ dialogue, onSelectNode, selectedNodeId, locales, activeLang
     // Nodes
     for (const node of dialogue.nodes) {
       drawNode(ctx, node, node.id === selectedNodeId)
+    }
+
+    // Connect-mode preview line
+    const dr = dragRef.current
+    if (dr?.type === 'connect') {
+      const src = dialogue.nodes.find(n => n.id === dr.fromId)
+      if (src) {
+        const sx = (src._x || 0) + NODE_W / 2, sy = (src._y || 0) + NODE_H
+        ctx.beginPath()
+        ctx.moveTo(sx, sy)
+        ctx.lineTo(dr.mx ?? sx, dr.my ?? sy)
+        ctx.strokeStyle = '#a78bfa'
+        ctx.lineWidth = 1.5
+        ctx.setLineDash([5, 4])
+        ctx.stroke()
+        ctx.setLineDash([])
+      }
     }
   }
 
@@ -347,33 +369,107 @@ function NodeGraph({ dialogue, onSelectNode, selectedNodeId, locales, activeLang
     return null
   }
 
+  function hitOutputPort(x, y, node) {
+    const px = (node._x || 0) + NODE_W / 2
+    const py = (node._y || 0) + NODE_H
+    return Math.hypot(x - px, y - py) < 10
+  }
+
+  // Bezier hit-test: sample puntos de cada curva y comprueba distancia al click
+  function hitConnection(mx, my) {
+    const THRESHOLD = 8
+    for (const conn of (dialogue?.connections || [])) {
+      const src = dialogue.nodes.find(n => n.id === conn.from)
+      const dst = dialogue.nodes.find(n => n.id === conn.to)
+      if (!src || !dst) continue
+      const sx = (src._x || 0) + NODE_W / 2, sy = (src._y || 0) + NODE_H
+      const dx = (dst._x || 0) + NODE_W / 2, dy = (dst._y || 0)
+      const cy = (sy + dy) / 2
+      for (let t = 0; t <= 1; t += 0.04) {
+        const u = 1 - t
+        const bx = u*u*u*sx + 3*u*u*t*sx + 3*u*t*t*dx + t*t*t*dx
+        const by = u*u*u*sy + 3*u*u*t*cy + 3*u*t*t*cy + t*t*t*dy
+        if (Math.hypot(bx - mx, by - my) < THRESHOLD) return conn
+      }
+    }
+    return null
+  }
+
   function getPos(e) {
     const r = canvasRef.current.getBoundingClientRect()
     return { x: e.clientX - r.left, y: e.clientY - r.top }
   }
 
   function handleMouseDown(e) {
+    if (e.button !== 0) return
     const { x, y } = getPos(e)
+
+    // En modo conectar: clic en nodo destino → crear conexión
+    if (dragRef.current?.type === 'connect') {
+      const hit = hitNode(x, y)
+      const hitNode_ = hit ? dialogue.nodes.find(n => n.id === hit) : null
+      if (hit && hit !== dragRef.current.fromId && hitNode_?.type !== NODE_TYPES.START) {
+        connectNodes(dragRef.current.fromId, hit, dragRef.current.choiceIndex)
+        onSelectNode(hit)
+      }
+      dragRef.current = null
+      draw()
+      return
+    }
+
+    // Comprobar clic en puerto de salida (prioridad sobre arrastrar nodo)
+    if (dialogue?.nodes) {
+      for (const node of dialogue.nodes) {
+        if (node.type === NODE_TYPES.END) continue
+        if (hitOutputPort(x, y, node)) {
+          dragRef.current = { type: 'connect', fromId: node.id, choiceIndex: null, mx: x, my: y }
+          onSelectNode(node.id)
+          draw()
+          return
+        }
+      }
+    }
+
+    // Arrastrar nodo o deseleccionar
     const hit = hitNode(x, y)
     if (hit) {
       onSelectNode(hit)
       const node = dialogue.nodes.find(n => n.id === hit)
-      dragRef.current = { nodeId: hit, offX: x - (node._x || 0), offY: y - (node._y || 0) }
+      dragRef.current = { type: 'move', nodeId: hit, offX: x - (node._x || 0), offY: y - (node._y || 0) }
     } else {
       onSelectNode(null)
+      dragRef.current = null
     }
   }
 
   function handleMouseMove(e) {
-    if (!dragRef.current) return
     const { x, y } = getPos(e)
-    setNodePosition(dragRef.current.nodeId,
-      Math.round(x - dragRef.current.offX),
-      Math.round(y - dragRef.current.offY)
-    )
+    if (dragRef.current?.type === 'move') {
+      setNodePosition(dragRef.current.nodeId, Math.round(x - dragRef.current.offX), Math.round(y - dragRef.current.offY))
+    } else if (dragRef.current?.type === 'connect') {
+      dragRef.current = { ...dragRef.current, mx: x, my: y }
+      draw()
+    }
   }
 
-  function handleMouseUp() { dragRef.current = null }
+  function handleMouseUp(e) {
+    if (dragRef.current?.type === 'move') dragRef.current = null
+    // connect mode se cancela con clic derecho, no con mouseup
+  }
+
+  function handleContextMenu(e) {
+    e.preventDefault()
+    // Cancelar modo conectar con clic derecho
+    if (dragRef.current?.type === 'connect') {
+      dragRef.current = null
+      draw()
+      return
+    }
+    // Borrar conexión bajo el cursor
+    const { x, y } = getPos(e)
+    const conn = hitConnection(x, y)
+    if (conn) disconnectNode(conn.from, conn.choiceIndex)
+  }
 
   // Resize canvas to parent
   useEffect(() => {
@@ -393,12 +489,13 @@ function NodeGraph({ dialogue, onSelectNode, selectedNodeId, locales, activeLang
     <canvas ref={canvasRef} className="dlg-graph"
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
-      onMouseUp={handleMouseUp} />
+      onMouseUp={handleMouseUp}
+      onContextMenu={handleContextMenu} />
   )
 }
 
 // ── NodeInspector ─────────────────────────────────────────────────────────────
-function NodeInspector({ node, dialogue, gameDir, chars, onUpdate, onDelete, onDuplicate, onAddChild }) {
+function NodeInspector({ node, dialogue, gameDir, chars, objects, onUpdate, onDelete, onDuplicate, onAddChild, onDisconnect }) {
   const { locales, langs, activeLang, setActiveLang, setKey } = useLocaleStore()
   const { dialogues } = useDialogueStore()
 
@@ -437,6 +534,11 @@ function NodeInspector({ node, dialogue, gameDir, chars, onUpdate, onDelete, onD
       </div>
 
       <div className="dlg-inspector__body">
+        {/* START */}
+        {node.type === NODE_TYPES.START && (
+          <p className="dlg-inspector__hint">Punto de entrada del diálogo. Conecta su salida al primer nodo de contenido.</p>
+        )}
+
         {/* LINE */}
         {node.type === NODE_TYPES.LINE && (
           <>
@@ -495,47 +597,197 @@ function NodeInspector({ node, dialogue, gameDir, chars, onUpdate, onDelete, onD
                 )
               })()}
             </label>
+            <label title="Solo muestra esta línea si el protagonista activo es el seleccionado">
+              Visible solo para protagonista
+              <select value={node.charFilter || ''}
+                onChange={e => onUpdate(node.id, { charFilter: e.target.value || null })}>
+                <option value="">— todos —</option>
+                {chars.map(c => <option key={c.id} value={c.id}>{getCharName(c.id)}</option>)}
+              </select>
+            </label>
           </>
         )}
 
         {/* CHOICE */}
-        {node.type === NODE_TYPES.CHOICE && (
-          <>
-            <label>
-              Texto introductorio <span className="dlg-lang-badge">[{activeLang}]</span>
-              <input type="text" placeholder="¿Qué quieres decir? (opcional)"
-                value={t(node.promptKey)}
-                onChange={e => setT(node.promptKey, e.target.value)} />
-            </label>
-            <div className="dlg-choices">
-              {(node.choices || []).map((ch, idx) => (
-                <div key={ch.id} className="dlg-choice-row">
-                  <span className="dlg-choice-idx">{idx}</span>
-                  <div className="dlg-choice-fields">
-                    <input type="text" placeholder={`Opción ${idx + 1} [${activeLang}]`}
-                      value={t(ch.textKey)}
-                      onChange={e => setT(ch.textKey, e.target.value)} />
-                    <input type="text" placeholder="condición (flag)"
-                      value={ch.condition || ''}
-                      onChange={e => {
-                        const choices = node.choices.map((c, i) => i === idx ? { ...c, condition: e.target.value || null } : c)
+        {node.type === NODE_TYPES.CHOICE && (() => {
+          const MAX_CHARS = 38 // ~1 línea fuente small en DOS 320px
+          return (
+            <>
+              <label>
+                Texto introductorio <span className="dlg-lang-badge">[{activeLang}]</span>
+                <input type="text" placeholder="¿Qué quieres decir? (opcional)"
+                  value={t(node.promptKey)}
+                  onChange={e => setT(node.promptKey, e.target.value)} />
+              </label>
+              <div className="dlg-choices">
+                {(node.choices || []).map((ch, idx) => {
+                  const chText  = t(ch.textKey)
+                  const chLen   = chText.length
+                  const over    = chLen > MAX_CHARS
+                  const warn    = !over && chLen > MAX_CHARS * 0.8
+                  const countColor = over ? '#ef4444' : warn ? '#f59e0b' : 'rgba(148,163,184,0.4)'
+                  const connected  = (dialogue.connections || []).find(
+                    c => c.from === node.id && c.choiceIndex === idx
+                  )
+                  return (
+                    <div key={ch.id} className="dlg-choice-row">
+                      <span className="dlg-choice-idx">{idx}</span>
+                      <div className="dlg-choice-fields">
+                        <div style={{ position: 'relative' }}>
+                          <input type="text" placeholder={`Opción ${idx + 1} [${activeLang}]`}
+                            value={chText}
+                            style={over ? { borderColor: '#ef4444', paddingRight: '3.2rem' } : { paddingRight: '3.2rem' }}
+                            onChange={e => setT(ch.textKey, e.target.value)} />
+                          <span style={{
+                            position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)',
+                            fontSize: '10px', fontFamily: 'monospace', color: countColor, pointerEvents: 'none',
+                          }}>{chLen}/{MAX_CHARS}</span>
+                        </div>
+                        {/* Selector de tipo de condición */}
+                        {(() => {
+                          let cond = null
+                          if (ch.condition) {
+                            try { cond = typeof ch.condition === 'string' ? JSON.parse(ch.condition) : ch.condition } catch { cond = null }
+                          }
+                          // FIX: detectar 'flag' aunque name sea string vacío
+                          const condType = cond?.type === 'prot_has_item' ? 'prot_has_item'
+                                         : cond?.type === 'has_item'      ? 'has_item'
+                                         : (cond && 'name' in cond)       ? 'flag'
+                                         : 'none'
+                          function setCond(next) {
+                            const choices = node.choices.map((c, i) => i === idx ? { ...c, condition: next ? JSON.stringify(next) : null } : c)
+                            onUpdate(node.id, { choices })
+                          }
+                          // Objetos cogibles disponibles en el juego
+                          const pickable = (objects || []).filter(o => o.type === 'pickable')
+                          const itemPicker = (type) => (
+                            <select style={{ flex:1, fontSize:'10px' }}
+                              value={cond?.itemId || ''}
+                              onChange={e => setCond({ type, itemId: e.target.value })}>
+                              <option value="">— elegir objeto —</option>
+                              {pickable.map(o => (
+                                <option key={o.id} value={o.id}>{o.name || o.id}</option>
+                              ))}
+                              {pickable.length === 0 && (
+                                <option disabled>No hay objetos cogibles definidos</option>
+                              )}
+                            </select>
+                          )
+                          return (
+                            <div style={{ display:'flex', gap:'4px', alignItems:'center', flexWrap:'wrap' }}>
+                              <select style={{ flex:'0 0 auto', fontSize:'10px' }}
+                                value={condType}
+                                onChange={e => {
+                                  const t = e.target.value
+                                  if (t === 'none')           setCond(null)
+                                  else if (t === 'flag')           setCond({ name:'', value:'true' })
+                                  else if (t === 'has_item')       setCond({ type:'has_item', itemId:'' })
+                                  else if (t === 'prot_has_item')  setCond({ type:'prot_has_item', itemId:'' })
+                                }}>
+                                <option value="none">sin condición</option>
+                                <option value="flag">flag</option>
+                                <option value="prot_has_item">personaje tiene objeto</option>
+                                <option value="has_item">grupo tiene objeto</option>
+                              </select>
+
+                              {condType === 'flag' && (
+                                <>
+                                  <input type="text" placeholder="nombre_flag" style={{ flex:1, minWidth:'80px' }}
+                                    value={cond?.name ?? ''}
+                                    onChange={e => setCond({ name: e.target.value, value: cond?.value ?? 'true' })} />
+                                  <select style={{ flex:'0 0 auto', fontSize:'10px' }}
+                                    value={cond?.value ?? 'true'}
+                                    onChange={e => setCond({ name: cond?.name ?? '', value: e.target.value })}>
+                                    <option value="true">= true</option>
+                                    <option value="false">= false</option>
+                                  </select>
+                                </>
+                              )}
+
+                              {condType === 'prot_has_item' && itemPicker('prot_has_item')}
+                              {condType === 'has_item'      && itemPicker('has_item')}
+                            </div>
+                          )
+                        })()}
+                        <div style={{ display:'flex', gap:'4px', alignItems:'center', marginTop:'2px' }}>
+                          <span style={{ fontSize:'10px', opacity:.5, flexShrink:0 }}>Protagonista:</span>
+                          <select style={{ flex:1, fontSize:'10px' }}
+                            value={ch.charFilter || ''}
+                            onChange={e => {
+                              const choices = node.choices.map((c, i) => i === idx ? { ...c, charFilter: e.target.value || null } : c)
+                              onUpdate(node.id, { choices })
+                            }}>
+                            <option value="">— todos —</option>
+                            {chars.map(c => <option key={c.id} value={c.id}>{getCharName(c.id)}</option>)}
+                          </select>
+                        </div>
+                        {connected ? (
+                          <div style={{ fontSize: '11px', color: '#a78bfa', padding: '2px 4px' }}>
+                            → nodo <code style={{ fontSize: '10px' }}>{connected.to.slice(-8)}</code>
+                          </div>
+                        ) : (
+                          <div className="dlg-choice-addnext">
+                            <span style={{ fontSize: '10px', color: 'rgba(148,163,184,0.5)', marginRight: '4px' }}>sig.:</span>
+                            {Object.entries(NODE_META).map(([nt, m]) => (
+                              <button key={nt} className="dlg-add-node-btn dlg-add-node-btn--xs"
+                                style={{ '--node-color': m.color }}
+                                title={`Añadir nodo ${m.label} para opción ${idx}`}
+                                onClick={() => onAddChild(node.id, nt, idx)}>
+                                {m.icon}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                      <div style={{ display:'flex', flexDirection:'column', gap:'1px' }}>
+                        <button className="btn-icon" style={{ fontSize:'9px', padding:'1px 4px' }}
+                          disabled={idx === 0}
+                          title="Subir opción"
+                          onClick={() => {
+                            if (idx === 0) return
+                            const choices = [...node.choices]
+                            ;[choices[idx - 1], choices[idx]] = [choices[idx], choices[idx - 1]]
+                            // Remap choiceIndex en conexiones: swap idx y idx-1
+                            const connections = (dialogue.connections || []).map(c => {
+                              if (c.from !== node.id) return c
+                              if (c.choiceIndex === idx)     return { ...c, choiceIndex: idx - 1 }
+                              if (c.choiceIndex === idx - 1) return { ...c, choiceIndex: idx }
+                              return c
+                            })
+                            onUpdate(node.id, { choices, _connections: connections })
+                          }}>▲</button>
+                        <button className="btn-icon" style={{ fontSize:'9px', padding:'1px 4px' }}
+                          disabled={idx === node.choices.length - 1}
+                          title="Bajar opción"
+                          onClick={() => {
+                            if (idx === node.choices.length - 1) return
+                            const choices = [...node.choices]
+                            ;[choices[idx], choices[idx + 1]] = [choices[idx + 1], choices[idx]]
+                            const connections = (dialogue.connections || []).map(c => {
+                              if (c.from !== node.id) return c
+                              if (c.choiceIndex === idx)     return { ...c, choiceIndex: idx + 1 }
+                              if (c.choiceIndex === idx + 1) return { ...c, choiceIndex: idx }
+                              return c
+                            })
+                            onUpdate(node.id, { choices, _connections: connections })
+                          }}>▼</button>
+                      </div>
+                      <button className="btn-icon" onClick={() => {
+                        const choices = node.choices.filter((_, i) => i !== idx)
                         onUpdate(node.id, { choices })
-                      }} />
-                  </div>
-                  <button className="btn-icon" onClick={() => {
-                    const choices = node.choices.filter((_, i) => i !== idx)
-                    onUpdate(node.id, { choices })
-                  }}>✕</button>
-                </div>
-              ))}
-              <button className="btn-ghost dlg-add-choice" onClick={() => {
-                const chId = `ch_${Date.now()}`
-                const newCh = { id: chId, textKey: `dlg.${dialogue.id}.${chId}`, condition: null }
-                onUpdate(node.id, { choices: [...(node.choices || []), newCh] })
-              }}>＋ Añadir opción</button>
-            </div>
-          </>
-        )}
+                      }}>✕</button>
+                    </div>
+                  )
+                })}
+                <button className="btn-ghost dlg-add-choice" onClick={() => {
+                  const chId = `ch_${Date.now()}`
+                  const newCh = { id: chId, textKey: `dlg.${dialogue.id}.${chId}`, condition: null }
+                  onUpdate(node.id, { choices: [...(node.choices || []), newCh] })
+                }}>＋ Añadir opción</button>
+              </div>
+            </>
+          )
+        })()}
 
         {/* BRANCH */}
         {node.type === NODE_TYPES.BRANCH && (
@@ -621,8 +873,27 @@ function NodeInspector({ node, dialogue, gameDir, chars, onUpdate, onDelete, onD
         )}
       </div>
 
-      {/* Add child node buttons */}
-      {node.type !== NODE_TYPES.END && node.type !== NODE_TYPES.JUMP && (
+      {/* Conexión saliente + botón ✕ para nodos no-CHOICE */}
+      {node.type !== NODE_TYPES.END && node.type !== NODE_TYPES.CHOICE && (() => {
+        const outConn = (dialogue.connections || []).filter(c => c.from === node.id && c.choiceIndex === null)
+        if (outConn.length === 0) return null
+        return (
+          <div className="dlg-inspector__connections">
+            {outConn.map(c => (
+              <div key={c.to} className="dlg-inspector__conn-row">
+                <span style={{ color: '#a78bfa', fontSize: '11px' }}>
+                  → <code style={{ fontSize: '10px' }}>{c.to.slice(-8)}</code>
+                </span>
+                <button className="btn-icon" title="Eliminar conexión"
+                  onClick={() => onDisconnect(node.id, null)}>✕</button>
+              </div>
+            ))}
+          </div>
+        )
+      })()}
+
+      {/* Add child node buttons — oculto para CHOICE (conexiones son por opción) */}
+      {node.type !== NODE_TYPES.END && node.type !== NODE_TYPES.JUMP && node.type !== NODE_TYPES.CHOICE && (
         <div className="dlg-inspector__add-child">
           <span className="dlg-inspector__add-label">Añadir nodo siguiente:</span>
           <div className="dlg-inspector__add-btns">
@@ -651,8 +922,11 @@ function DialogueGraphEditor({ gameDir, dialogueId, onBack }) {
     onBack()
   }
   const { activeDialogue, dirty, openDialogue, saveDialogue, closeDialogue,
-          updateNode, deleteNode, duplicateNode, addNode, updateDialogueMeta } = useDialogueStore()
+          updateNode, deleteNode, duplicateNode, addNode, updateDialogueMeta, disconnectNode } = useDialogueStore()
   const { chars, loadChars } = useCharStore()
+  const { objects, loadObjects } = useObjectStore()
+  const { activeGame } = useAppStore()
+  const palette = activeGame?.game?.palette || []
   const { locales, activeLang, dirty: localeDirty, saveAll: saveLocales, loadAll: loadLocales } = useLocaleStore()
   const [selectedNodeId, setSelectedNodeId] = useState(null)
 
@@ -664,6 +938,7 @@ function DialogueGraphEditor({ gameDir, dialogueId, onBack }) {
   useEffect(() => {
     if (gameDir) {
       loadChars(gameDir)
+      loadObjects(gameDir)
       loadLocales(gameDir)   // always reload — locales may have changed since last visit
     }
   }, [gameDir])
@@ -687,14 +962,35 @@ function DialogueGraphEditor({ gameDir, dialogueId, onBack }) {
           {activeDialogue.name}
           {(dirty || localeDirty?.size > 0) && <span className="dlg-dirty"> ●</span>}
         </span>
-        <label className="dlg-actor-picker">
-          Actor principal:
-          <select value={activeDialogue.actorId || ''}
-            onChange={e => updateDialogueMeta({ actorId: e.target.value || null })}>
-            <option value="">— ninguno —</option>
-            {chars.map(c => <option key={c.id} value={c.id}>{getCharName(c.id)}</option>)}
-          </select>
-        </label>
+        {/* Colores del panel de opciones — override por diálogo */}
+        {(() => {
+          const hasOverride = !!activeDialogue.colors
+          const dc = activeDialogue.colors || {}
+          const setDC = (k, v) => updateDialogueMeta({ colors: { ...dc, [k]: v } })
+          const clearColors = () => updateDialogueMeta({ colors: null })
+          const enableColors = () => updateDialogueMeta({ colors: { bg:16, brd:0, txt:15, sel:26 } })
+          return (
+            <div style={{ display:'flex', gap:'6px', alignItems:'center', padding:'0 6px',
+                          borderLeft:'1px solid #444', marginLeft:'4px' }}>
+              <label style={{ display:'flex', alignItems:'center', gap:'4px', fontSize:'11px', cursor:'pointer' }}>
+                <input type="checkbox" checked={hasOverride}
+                  onChange={e => e.target.checked ? enableColors() : clearColors()} />
+                <span style={{ opacity:.7 }}>colores propios</span>
+              </label>
+              {hasOverride && [
+                { k:'bg',  label:'fondo', def:16 },
+                { k:'brd', label:'borde', def:0  },
+                { k:'txt', label:'texto', def:15 },
+                { k:'sel', label:'hover', def:26 },
+              ].map(({ k, label, def }) => (
+                <label key={k} style={{ display:'flex', alignItems:'center', gap:'3px', fontSize:'10px' }}>
+                  <span style={{ opacity:.6 }}>{label}</span>
+                  <PalettePicker palette={palette} value={dc[k] ?? def} onChange={v => setDC(k, v)} />
+                </label>
+              ))}
+            </div>
+          )
+        })()}
         <div style={{ flex: 1 }} />
         <button className={`btn-primary ${(!dirty && !localeDirty?.size) ? 'btn-primary--disabled' : ''}`}
           onClick={async () => { await saveDialogue(gameDir); await saveLocales(gameDir) }} disabled={!dirty && !localeDirty?.size}>
@@ -706,7 +1002,11 @@ function DialogueGraphEditor({ gameDir, dialogueId, onBack }) {
       <div className="dlg-workspace">
         <div className="dlg-palette">
           <div className="dlg-palette__label">Añadir nodo</div>
-          {Object.entries(NODE_META).map(([t, m]) => (
+          {Object.entries(NODE_META).filter(([t, m]) => {
+            if (!m.palette) return false
+            if (t === NODE_TYPES.START) return !activeDialogue?.nodes?.some(n => n.type === NODE_TYPES.START)
+            return true
+          }).map(([t, m]) => (
             <button key={t} className="dlg-palette-btn"
               style={{ '--node-color': m.color }}
               onClick={() => addNode(t)}>
@@ -720,12 +1020,12 @@ function DialogueGraphEditor({ gameDir, dialogueId, onBack }) {
           dialogue={activeDialogue}
           gameDir={gameDir}
           chars={chars}
+          objects={objects}
           onUpdate={updateNode}
           onDelete={(id) => { deleteNode(id); setSelectedNodeId(null) }}
           onDuplicate={(id) => { duplicateNode(id) }}
-          onAddChild={(parentId, type, choiceIndex) => {
-            addNode(type, parentId, choiceIndex)
-          }}
+          onAddChild={(parentId, type, choiceIndex) => { addNode(type, parentId, choiceIndex) }}
+          onDisconnect={(fromId, choiceIndex) => { disconnectNode(fromId, choiceIndex) }}
         />
         <div className="dlg-graph-area">
           <NodeGraph

@@ -209,7 +209,8 @@ static char       g_cur_entry[32] = "entry_default";
 #define ANIM_TALK_UP    9   /* hablar mirando arriba   (fallback: ANIM_TALK / ANIM_IDLE_UP) */
 #define ANIM_TALK_DOWN 10   /* hablar mirando abajo    (fallback: ANIM_TALK / ANIM_IDLE_DOWN) */
 #define ANIM_TALK_LEFT 11   /* hablar mirando izquierda (opcional; si vacío, ANIM_TALK se espeja) */
-#define ANIM_ROLES     12
+#define ANIM_GIVE      12   /* dar objeto (fallback: ANIM_TALK si vacío) */
+#define ANIM_ROLES     13
 
 /* Cambia la animacion activa y actualiza ms_per_frame cacheado (evita division en render) */
 #define CHAR_SET_ANIM(c, role) do { \
@@ -290,11 +291,34 @@ static PartySlot g_party[MAX_PARTY];
 static int       g_party_count            = 0;
 static int       g_party_popup_open       = 0;  /* 1 = popup selector de protagonista visible */
 static int       g_suppress_prot_reinject = 0;  /* 1 = no reinjectar prot actual en change_room */
+static char      g_prev_room[32]          = "";  /* room guardada por engine_enter_closeup */
+static char      g_closeup_prot_id[32]    = "";  /* id del protagonista real al entrar closeup */
+static char      g_active_prot_id[32]     = "";  /* id del protagonista antes del ultimo change_room */
 /* Colores del popup de party (indices de paleta VGA, configurables via engine_set_party_popup_colors) */
 static u8        g_popup_col_bg     = 1;   /* fondo del panel */
 static u8        g_popup_col_border = 8;   /* borde del panel */
 static u8        g_popup_col_active = 8;   /* celda del protagonista activo */
 static u8        g_popup_col_hover  = 4;   /* celda en hover */
+
+/* Colores del panel de opciones de dialogo (configurables via engine_set_dialogue_colors) */
+static u8        g_dlg_col_bg  = 16;   /* fondo */
+static u8        g_dlg_col_brd =  0;   /* borde */
+static u8        g_dlg_col_txt = 15;   /* texto normal */
+static u8        g_dlg_col_sel = 26;   /* fila en hover */
+
+/* Colores del menu de juego / barra de verbos (configurables via engine_set_ui_colors) */
+static u8        g_ui_col_bg      =  1;  /* fondo de la banda UI (56px inferiores) */
+static u8        g_ui_col_action  = 15;  /* texto de la linea de accion */
+static u8        g_ui_col_sel     = 14;  /* verbo seleccionado */
+static u8        g_ui_col_inv_hov =  8;  /* fondo slot inventario en hover/seleccionado */
+
+/* Colores del menu ESC/pausa (configurables via engine_set_menu_colors) */
+static u8        g_menu_col_bg  = 16;  /* fondo panel y overlay dithered */
+static u8        g_menu_col_btn = 20;  /* boton normal */
+static u8        g_menu_col_sel = 26;  /* boton hover/seleccionado */
+static u8        g_menu_col_brd =  0;  /* borde panel y botones */
+static u8        g_menu_col_txt = 15;  /* texto de botones */
+static u8        g_menu_col_act = 12;  /* item activo (idioma en uso, driver activo) */
 static char      g_party_switch_pending[32] = ""; /* char_id a activar tras load_fn (cross-room switch) */
 
 /* -- Objetos ---------------------------------------------------------------- */
@@ -478,6 +502,8 @@ static ArrowSprite g_arrow_up       = { NULL, 0 };
 static ArrowSprite g_arrow_up_hover = { NULL, 0 };
 static ArrowSprite g_arrow_dn       = { NULL, 0 };
 static ArrowSprite g_arrow_dn_hover = { NULL, 0 };
+static ArrowSprite g_party_btn      = { NULL, 0 };
+static ArrowSprite g_party_btn_hov  = { NULL, 0 };
 
 /* -- Flags globales --------------------------------------------------------- */
 typedef struct { char name[32]; int value; } Flag;
@@ -509,6 +535,7 @@ typedef struct {
     char obj2_id[32];  /* obj2: para "usar X con Y" (puede ser "") */
     int  is_inv;       /* 1 = obj_id es objeto de inventario */
     int  require_both_inv; /* 1 = ambos objetos deben estar en inventario */
+    char char_id[32];  /* "" = genérico; no vacío = solo para este protagonista */
     void (*fn)(void);
 } VerbHandler;
 
@@ -520,6 +547,13 @@ static int  g_usar_con_mode = 0;       /* 1 = esperando segundo objeto */
 static char g_usar_con_inv[32]  = "";  /* obj1 del inventario */
 static char g_usar_con_verb[32] = "";  /* verbo que inicio el modo */
 static char g_usar_con_base[64] = "";  /* "usar [X] con" fijo en action line */
+
+/* Estado "dar": objeto inv seleccionado esperando personaje objetivo */
+static int  g_dar_mode = 0;
+static char g_dar_inv[32]  = "";   /* objeto del inventario a dar */
+static char g_dar_verb[32] = "";   /* id del verbo dar activo */
+static char g_dar_base[64] = "";   /* "Dar [X] a" fijo en action line */
+static char g_dar_target[32] = ""; /* personaje objetivo (accesible via engine_get_dar_target) */
 
 typedef struct { char obj_id[32]; void (*fn)(void); } ClickHandler;
 #define MAX_CLICK_HANDLERS 64
@@ -541,6 +575,7 @@ static int g_running            = 0;
 static int g_exit_blocked       = 0;
 static char g_pending_exit_id[32] = ""; /* exit al que el jugador caminó explícitamente */
 static int g_ui_hidden          = 0;  /* 1 = ocultar verbos+inventario durante secuencias */
+static void (*g_pre_flip_fn)(void) = NULL; /* hook llamado justo antes de _vga_flip — para overlays sobre la escena */
 static int g_bg_fullscreen      = 0;  /* 1 = fondo 320x200, sin UI, sin hover, sin exits */
 static int g_restart_requested  = 0;  /* 1 = reiniciar partida desde el principio */
 
@@ -589,6 +624,7 @@ typedef struct {
     u8   is_movement;
     u8   approach_obj;   /* 1 = personaje camina hasta objeto antes de ejecutar */
     u8   is_pickup;      /* 1 = recoger objeto y mandar al inventario            */
+    u8   is_give;        /* 1 = verbo dar: seleccionar inv → esperar personaje  */
     u8   col;
     u8   row;
     u8   normal_color;   /* color del texto en estado normal (índice paleta)    */
@@ -686,6 +722,7 @@ static char       g_hover_obj[32]     = "";
 #define PEND_HANDLER 1   /* ejecutar fn() al llegar */
 #define PEND_PICKUP  2   /* pickup automático al llegar */
 #define PEND_RESP    3   /* solo mostrar texto de respuesta al llegar */
+#define PEND_DAR     4   /* dar objeto a personaje: walk + transferencia al llegar */
 typedef struct {
     u8   type;
     char obj_id[32];
@@ -1135,6 +1172,8 @@ void engine_dat_open_all(void) {
       g_arrow_up_hover.buf = (u8*)engine_dat_load_gfx("inv_arrow_up_hover",  &sz); g_arrow_up_hover.size = sz;
       g_arrow_dn.buf       = (u8*)engine_dat_load_gfx("inv_arrow_down",      &sz); g_arrow_dn.size       = sz;
       g_arrow_dn_hover.buf = (u8*)engine_dat_load_gfx("inv_arrow_down_hover",&sz); g_arrow_dn_hover.size = sz;
+      g_party_btn.buf      = (u8*)engine_dat_load_gfx("party_btn",           &sz); g_party_btn.size      = sz;
+      g_party_btn_hov.buf  = (u8*)engine_dat_load_gfx("party_btn_hover",     &sz); g_party_btn_hov.size  = sz;
       DBG("arrow sprites: up=%p uhov=%p dn=%p dhov=%p\n",
           (void*)g_arrow_up.buf, (void*)g_arrow_up_hover.buf,
           (void*)g_arrow_dn.buf, (void*)g_arrow_dn_hover.buf);
@@ -1281,27 +1320,58 @@ int engine_get_flag(const char* name) {
 /* Evaluacion minima de condiciones serializadas como JSON string.
  * Soporta: { "type":"flag", "name":"x", "op":"eq", "value":"true" }
  * Implementacion simplificada: solo flag==value por ahora. */
+/* Extrae el valor de una clave de string del JSON plano: {"key":"valor"} */
+static int _json_str(const char* json, const char* key, char* out, int max) {
+    char kbuf[40]; int klen;
+    kbuf[0]='"'; _strlcpy(kbuf+1, key, 36); klen=(int)strlen(kbuf);
+    kbuf[klen]='"'; kbuf[klen+1]=0;
+    const char* p = strstr(json, kbuf);
+    if (!p) return 0;
+    p = strchr(p + klen + 1, '"'); if (!p) return 0; p++;
+    const char* e = strchr(p, '"'); if (!e) return 0;
+    int l = (int)(e-p); if (l >= max) l = max-1;
+    memcpy(out, p, (u32)l); out[l] = 0;
+    return 1;
+}
+
 int engine_eval_cond(const char* cond_json) {
-    /* Extrae "name" y "value" del JSON plano */
-    const char* np = strstr(cond_json, "\"name\"");
-    const char* vp = strstr(cond_json, "\"value\"");
-    char name[32] = "", val[32] = "";
-    if (np) {
-        np = strchr(np + 6, '"'); if (np) { np++;
-        const char* end = strchr(np, '"');
-        if (end) { int l = (int)(end-np); if(l>31)l=31; memcpy(name,np,l); name[l]=0; }
-        }
+    char type[32] = "", name[32] = "", val[32] = "";
+    int i;
+    if (!cond_json || !cond_json[0]) return 1;
+    _json_str(cond_json, "type", type, 32);
+
+    /* has_item: verdadero si CUALQUIER miembro del grupo lleva el objeto */
+    if (_str_eq(type, "has_item")) {
+        char item_id[32] = "";
+        _json_str(cond_json, "itemId", item_id, 32);
+        if (!item_id[0]) return 0;
+        for (i = 0; i < g_inv_count; i++)
+            if (_str_eq(g_inventory[i].obj_id, item_id)) return 1;
+        return 0;
     }
-    if (vp) {
-        vp = strchr(vp + 7, '"'); if (vp) { vp++;
-        const char* end = strchr(vp, '"');
-        if (end) { int l = (int)(end-vp); if(l>31)l=31; memcpy(val,vp,l); val[l]=0; }
-        }
+
+    /* prot_has_item: verdadero solo si el protagonista activo lleva el objeto.
+     * g_active_prot_id persiste a traves de cambios de sala. */
+    if (_str_eq(type, "prot_has_item")) {
+        char item_id[32] = "";
+        const char* pid = g_active_prot_id[0] ? g_active_prot_id : "";
+        _json_str(cond_json, "itemId", item_id, 32);
+        if (!item_id[0] || !pid[0]) return 0;
+        for (i = 0; i < g_inv_count; i++)
+            if (_str_eq(g_inventory[i].obj_id, item_id) &&
+                (!g_inventory[i].char_owner[0] || _str_eq(g_inventory[i].char_owner, pid)))
+                return 1;
+        return 0;
     }
-    if (!name[0]) return 1; /* condicion vacia = siempre verdadero */
-    int fv = engine_get_flag(name);
-    int tv = (strcmp(val,"true")==0) ? 1 : (strcmp(val,"false")==0) ? 0 : atoi(val);
-    return fv == tv;
+
+    /* flag (por defecto): {"name":"flag","value":"true"} */
+    _json_str(cond_json, "name",  name, 32);
+    _json_str(cond_json, "value", val,  32);
+    if (!name[0]) return 1;
+    { int fv = engine_get_flag(name);
+      int tv = (_str_eq(val,"true")) ? 1 : (_str_eq(val,"false")) ? 0 : atoi(val);
+      return fv == tv;
+    }
 }
 
 void engine_set_attr(const char* target, const char* attr, const char* value) {
@@ -1522,6 +1592,7 @@ static void _room_clear_state(void) {
     g_exit_count  = 0;
     g_pending_exit_id[0] = '\0'; /* limpiar exit pendiente al cambiar de room */
     g_pending.type = PEND_NONE; g_pending.fn = NULL; /* cancelar accion pendiente — pertenecia a la room anterior */
+    g_dar_mode = 0; g_dar_inv[0] = '\0'; g_dar_base[0] = '\0'; /* cancelar dar pendiente */
     g_scroll_halves     = 0;    /* resetear modo scroll-por-mitades */
     g_cam_pan_active    = 0;
     g_scroll_recovering = 0;
@@ -1578,6 +1649,7 @@ void engine_change_room(const char* room_id, const char* entry_id) {
         saved_prot.dec_w     = 0;
         saved_prot.dec_h     = 0;
         had_protagonist = 1;
+        _strlcpy(g_active_prot_id, g_chars[g_protagonist].id, 32);
         DBG("change_room: saved prot=%s x=%d y=%d\n", saved_prot.id, (int)saved_prot.x, (int)saved_prot.y);
     }
 
@@ -1611,6 +1683,7 @@ void engine_change_room(const char* room_id, const char* entry_id) {
         for (i = 0; i < g_char_count; i++) {
             if (_str_eq(g_chars[i].id, saved_prot.id)) {
                 prot_placed = 1; g_protagonist = i;
+                _strlcpy(g_active_prot_id, g_chars[i].id, 32);
                 DBG("change_room: prot_placed=1 idx=%d\n", i);
                 /* Aunque la room ya coloco al protagonista, aplicar entry point
                  * si viene de un engine_change_room con entry_id explicito.
@@ -1627,9 +1700,13 @@ void engine_change_room(const char* room_id, const char* entry_id) {
                         DBG("change_room: prot_placed ep NOT found entry_id=%s\n", entry_id);
                     }
                 }
-                /* Actualizar room del protagonista en el party */
+                /* Actualizar room y posicion del protagonista en el party */
                 { int _pfp = _party_find(g_chars[g_protagonist].id);
-                  if (_pfp >= 0) _strlcpy(g_party[_pfp].room_id, g_cur_room, 32);
+                  if (_pfp >= 0) {
+                      _strlcpy(g_party[_pfp].room_id, g_cur_room, 32);
+                      g_party[_pfp].x = g_chars[g_protagonist].x;
+                      g_party[_pfp].y = g_chars[g_protagonist].y;
+                  }
                 }
                 break;
             }
@@ -1651,12 +1728,15 @@ void engine_change_room(const char* room_id, const char* entry_id) {
             g_char_count++;
             /* Pre-decodificar PCX del protagonista reinyectado */
             { Char* _cp = &g_chars[g_protagonist];
-              if (_cp->pcx_buf && !_cp->dec_buf) {
-                  u16 _w, _h;
+              if (_cp->pcx_buf) {
+                  u16 _w = 0, _h = 0;
                   _pcx_decode(_cp->pcx_buf, _cp->pcx_size, g_pcx_decode_buf, &_w, &_h, 0);
-                  if ((u32)_w * _h <= (u32)AG_SCREEN_PIXELS) {
-                      _cp->dec_buf = (u8*)malloc((u32)_w * _h);
-                      if (_cp->dec_buf) { memcpy(_cp->dec_buf, g_pcx_decode_buf, (u32)_w * _h); _cp->dec_w = _w; _cp->dec_h = _h; }
+                  if (_w > 0 && _h > 0) {
+                      _cp->dec_w = _w; _cp->dec_h = _h;
+                      if (!_cp->dec_buf && (u32)_w * _h <= (u32)AG_SCREEN_PIXELS) {
+                          _cp->dec_buf = (u8*)malloc((u32)_w * _h);
+                          if (_cp->dec_buf) memcpy(_cp->dec_buf, g_pcx_decode_buf, (u32)_w * _h);
+                      }
                   }
               }
             }
@@ -1676,9 +1756,13 @@ void engine_change_room(const char* room_id, const char* entry_id) {
                   g_chars[g_protagonist].y = ep->y;
               }
             }
-            /* Actualizar room del protagonista reinyectado en el party */
+            /* Actualizar room y posicion del protagonista reinyectado en el party */
             { int _pfr = _party_find(g_chars[g_protagonist].id);
-              if (_pfr >= 0) _strlcpy(g_party[_pfr].room_id, g_cur_room, 32);
+              if (_pfr >= 0) {
+                  _strlcpy(g_party[_pfr].room_id, g_cur_room, 32);
+                  g_party[_pfr].x = g_chars[g_protagonist].x;
+                  g_party[_pfr].y = g_chars[g_protagonist].y;
+              }
             }
         }
         /* Si la room ya lo coloco con engine_place_char, respeta su posicion/dir/anim */
@@ -1735,12 +1819,15 @@ void engine_change_room(const char* room_id, const char* entry_id) {
                     g_party[_psw_pidx].y = g_chars[g_protagonist].y;
                     /* Pre-decodificar PCX del personaje reinyectado via place_fn */
                     { Char* _ppc = &g_chars[g_protagonist];
-                      if (_ppc->pcx_buf && !_ppc->dec_buf) {
-                          u16 _pw, _ph;
+                      if (_ppc->pcx_buf) {
+                          u16 _pw = 0, _ph = 0;
                           _pcx_decode(_ppc->pcx_buf, _ppc->pcx_size, g_pcx_decode_buf, &_pw, &_ph, 0);
-                          if ((u32)_pw * _ph <= (u32)AG_SCREEN_PIXELS) {
-                              _ppc->dec_buf = (u8*)malloc((u32)_pw * _ph);
-                              if (_ppc->dec_buf) { memcpy(_ppc->dec_buf, g_pcx_decode_buf, (u32)_pw * _ph); _ppc->dec_w = _pw; _ppc->dec_h = _ph; }
+                          if (_pw > 0 && _ph > 0) {
+                              _ppc->dec_w = _pw; _ppc->dec_h = _ph;
+                              if (!_ppc->dec_buf && (u32)_pw * _ph <= (u32)AG_SCREEN_PIXELS) {
+                                  _ppc->dec_buf = (u8*)malloc((u32)_pw * _ph);
+                                  if (_ppc->dec_buf) memcpy(_ppc->dec_buf, g_pcx_decode_buf, (u32)_pw * _ph);
+                              }
                           }
                       }
                     }
@@ -1750,10 +1837,10 @@ void engine_change_room(const char* room_id, const char* entry_id) {
                     { /* Restaurar animacion si no es idle (tabla de roles) */
                       static const char* _aroles[] = {
                           "idle","walk_right","walk_left","walk_up","walk_down",
-                          "idle_up","idle_down","","talk","talk_up","talk_down","talk_left"
+                          "idle_up","idle_down","","talk","talk_up","talk_down","talk_left","give"
                       };
                       u8 _ca = g_party[_psw_pidx].cur_anim;
-                      if (_ca != ANIM_IDLE && _ca < 12 && _aroles[_ca][0])
+                      if (_ca != ANIM_IDLE && _ca < 13 && _aroles[_ca][0])
                           engine_set_anim(g_party_switch_pending, _aroles[_ca]);
                     }
                     DBG("change_room: party place_fn -> prot=%s x=%d y=%d dir=%s anim=%d\n",
@@ -1766,6 +1853,35 @@ void engine_change_room(const char* room_id, const char* entry_id) {
         }
         g_party_switch_pending[0] = '\0';
     }
+
+    /* Recolocar miembros del party que ya estaban en esta room y fueron borrados
+     * por _room_clear_state al entrar otro personaje. Cada personaje es independiente
+     * y debe aparecer en su ultima posicion guardada si su room_id coincide. */
+    {
+        int _rpi;
+        for (_rpi = 0; _rpi < g_party_count; _rpi++) {
+            if (!_str_eq(g_party[_rpi].room_id, g_cur_room)) continue;
+            if (_find_char(g_party[_rpi].id)) continue; /* ya colocado */
+            if (!g_party[_rpi].place_fn || g_char_count >= MAX_CHARS) continue;
+            g_party[_rpi].place_fn((s16)g_party[_rpi].x, (s16)g_party[_rpi].y);
+            { Char* _rpc = _find_char(g_party[_rpi].id);
+              if (_rpc && _rpc->pcx_buf) {
+                  u16 _rw = 0, _rh = 0;
+                  _pcx_decode(_rpc->pcx_buf, _rpc->pcx_size, g_pcx_decode_buf, &_rw, &_rh, 0);
+                  if (_rw > 0 && _rh > 0) {
+                      _rpc->dec_w = _rw; _rpc->dec_h = _rh;
+                      if (!_rpc->dec_buf && (u32)_rw * _rh <= (u32)AG_SCREEN_PIXELS) {
+                          _rpc->dec_buf = (u8*)malloc((u32)_rw * _rh);
+                          if (_rpc->dec_buf) memcpy(_rpc->dec_buf, g_pcx_decode_buf, (u32)_rw * _rh);
+                      }
+                  }
+              }
+            }
+            DBG("change_room: reinstate %s at x=%d y=%d\n",
+                g_party[_rpi].id, (int)g_party[_rpi].x, (int)g_party[_rpi].y);
+        }
+    }
+
     g_suppress_prot_reinject = 0;
 
     /* Ajustar camara instantaneamente al half correcto del protagonista.
@@ -1795,6 +1911,41 @@ void engine_change_room(const char* room_id, const char* entry_id) {
 }
 
 void engine_set_room_table(const RoomEntry* rooms) { g_room_table = rooms; }
+
+void engine_enter_closeup(const char* room_id, int show_ui) {
+    _strlcpy(g_prev_room, g_cur_room, sizeof(g_prev_room));
+    if (g_char_count > 0)
+        _strlcpy(g_closeup_prot_id, g_chars[g_protagonist].id, sizeof(g_closeup_prot_id));
+    else
+        g_closeup_prot_id[0] = '\0';
+    g_suppress_prot_reinject = 1;
+    if (show_ui) engine_show_ui(); else engine_hide_ui();
+    engine_change_room(room_id, "");
+}
+
+void engine_exit_closeup(void) {
+    char _ret[32];
+    char _pid[32];
+    int  _ei;
+    if (!g_prev_room[0]) return;
+    _strlcpy(_ret, g_prev_room, sizeof(_ret));
+    _strlcpy(_pid, g_closeup_prot_id, sizeof(_pid));
+    g_prev_room[0] = '\0';
+    g_closeup_prot_id[0] = '\0';
+    /* Protagonista no esta en esta room (closeup solo tiene NPCs): evitar que
+     * g_chars[g_protagonist] stale se reinyecte como protagonista en prev_room.
+     * El party reinstate loop lo colocara correctamente desde la tabla de party. */
+    if (_pid[0] && !_find_char(_pid))
+        g_suppress_prot_reinject = 1;
+    engine_change_room(_ret, "");
+    engine_show_ui();
+    /* Actualizar g_protagonist al indice real tras el reinstate */
+    if (_pid[0]) {
+        for (_ei = 0; _ei < g_char_count; _ei++) {
+            if (_str_eq(g_chars[_ei].id, _pid)) { g_protagonist = _ei; break; }
+        }
+    }
+}
 
 /* -- Iluminacion publica --------------------------------------------------- */
 
@@ -2043,8 +2194,20 @@ void engine_place_char(const char* char_id, s16 x, s16 y,
     if (idle_pcx && idle_pcx[0]) {
         c->pcx_buf  = (u8*)engine_dat_load_gfx(idle_pcx, &sz);
         c->pcx_size = sz;
-        /* Registrar el id cargado para que engine_face_dir no lo recargue innecesariamente */
         _strlcpy(c->pcx_loaded, idle_pcx, 32);
+        /* Pre-decodificar para que dec_w/dec_h sean válidos antes del primer render
+         * y para que _hit_char pueda calcular el hitbox correcto. */
+        if (c->pcx_buf) {
+            u16 _dw=0,_dh=0;
+            _pcx_decode(c->pcx_buf, sz, g_pcx_decode_buf, &_dw, &_dh, 0);
+            if (_dw>0 && _dh>0) {
+                c->dec_w=_dw; c->dec_h=_dh;
+                if ((u32)_dw*_dh <= (u32)AG_SCREEN_PIXELS) {
+                    c->dec_buf = (u8*)malloc((u32)_dw*_dh);
+                    if (c->dec_buf) { memcpy(c->dec_buf, g_pcx_decode_buf, (u32)_dw*_dh); }
+                }
+            }
+        }
         if (!c->pcx_buf) DBG("WARN: engine_place_char: PCX no encontrado en DAT: %s\n", idle_pcx);
     } else {
         DBG("WARN: engine_place_char: %s colocado sin PCX idle (cadena vacia)\n", char_id);
@@ -2058,7 +2221,11 @@ void engine_place_char(const char* char_id, s16 x, s16 y,
     c->frame_cur = 0;
     c->frame_timer = 0;
 
-    if (is_protagonist) g_protagonist = g_char_count;
+    /* Solo actualizar g_protagonist si no hay ninguno valido todavia.
+     * Las llamadas de on_room_enter para miembros no-activos del party
+     * no deben sobreescribir al protagonista ya fijado por reinject/party_switch. */
+    if (is_protagonist && (g_char_count == 0 || g_protagonist >= g_char_count))
+        g_protagonist = g_char_count;
     g_char_count++;
 }
 
@@ -2112,10 +2279,22 @@ static void _char_select_walk_anim(Char* c, s16 tx, s16 ty) {
         if (pcx_id[0] && strcmp(pcx_id, c->pcx_loaded) != 0) {
             if (c->pcx_buf) { free(c->pcx_buf); c->pcx_buf = NULL; }
             if (c->dec_buf) { free(c->dec_buf); c->dec_buf = NULL; c->dec_w = 0; c->dec_h = 0; } _spr_cache_free(c->spr_cache); c->spr_cache = NULL;
-            u32 sz;
-            c->pcx_buf = (u8*)engine_dat_load_gfx(pcx_id, &sz);
-            c->pcx_size = sz;
-            _strlcpy(c->pcx_loaded, pcx_id, 32);
+            { u32 sz;
+              c->pcx_buf = (u8*)engine_dat_load_gfx(pcx_id, &sz);
+              c->pcx_size = sz;
+              _strlcpy(c->pcx_loaded, pcx_id, 32);
+              if (c->pcx_buf) {
+                  u16 _dw=0,_dh=0;
+                  _pcx_decode(c->pcx_buf,sz,g_pcx_decode_buf,&_dw,&_dh,0);
+                  if (_dw>0&&_dh>0) {
+                      c->dec_w=_dw; c->dec_h=_dh;
+                      if ((u32)_dw*_dh<=(u32)AG_SCREEN_PIXELS) {
+                          c->dec_buf=(u8*)malloc((u32)_dw*_dh);
+                          if(c->dec_buf){memcpy(c->dec_buf,g_pcx_decode_buf,(u32)_dw*_dh);}
+                      }
+                  }
+              }
+            }
         }
     }
 }
@@ -2236,6 +2415,7 @@ void engine_set_anim(const char* char_id, const char* anim_name) {
     else if (_str_eq(anim_name, "talk_left"))  { CHAR_SET_ANIM(c, c->anims[ANIM_TALK_LEFT].id[0] ? ANIM_TALK_LEFT : (c->anims[ANIM_TALK].id[0] ? ANIM_TALK : ANIM_IDLE)); c->dir_left = 1; _strlcpy(c->dir, "left", 8); }
     else if (_str_eq(anim_name, "talk_up"))    { CHAR_SET_ANIM(c, c->anims[ANIM_TALK_UP].id[0]   ? ANIM_TALK_UP   : (c->anims[ANIM_TALK].id[0] ? ANIM_TALK : ANIM_IDLE)); }
     else if (_str_eq(anim_name, "talk_down"))  { CHAR_SET_ANIM(c, c->anims[ANIM_TALK_DOWN].id[0] ? ANIM_TALK_DOWN : (c->anims[ANIM_TALK].id[0] ? ANIM_TALK : ANIM_IDLE)); }
+    else if (_str_eq(anim_name, "give"))       { CHAR_SET_ANIM(c, c->anims[ANIM_GIVE].id[0]      ? ANIM_GIVE      : (c->anims[ANIM_TALK].id[0] ? ANIM_TALK : ANIM_IDLE)); }
     else {
         int _found = 0;
         for (_role = 0; _role < ANIM_CUSTOM; _role++) { /* no buscar en ANIM_CUSTOM */
@@ -2269,11 +2449,11 @@ void engine_set_anim(const char* char_id, const char* anim_name) {
           if (c->pcx_buf) {
               u16 _dw = 0, _dh = 0;
               _pcx_decode(c->pcx_buf, _sz, g_pcx_decode_buf, &_dw, &_dh, 0);
-              if (_dw > 0 && _dh > 0 && (u32)_dw * _dh <= (u32)AG_SCREEN_PIXELS) {
-                  c->dec_buf = (u8*)malloc((u32)_dw * _dh);
-                  if (c->dec_buf) {
-                      memcpy(c->dec_buf, g_pcx_decode_buf, (u32)_dw * _dh);
-                      c->dec_w = _dw; c->dec_h = _dh;
+              if (_dw > 0 && _dh > 0) {
+                  c->dec_w = _dw; c->dec_h = _dh;
+                  if ((u32)_dw * _dh <= (u32)AG_SCREEN_PIXELS) {
+                      c->dec_buf = (u8*)malloc((u32)_dw * _dh);
+                      if (c->dec_buf) memcpy(c->dec_buf, g_pcx_decode_buf, (u32)_dw * _dh);
                   }
               }
           }
@@ -2308,11 +2488,11 @@ void engine_set_anim_pcx(const char* char_id, const char* pcx_id, int frames, in
              * Imprescindible cuando fw=0: el render lo calcula como dec_w/frames. */
             { u16 _dw = 0, _dh = 0;
               _pcx_decode(new_buf, new_sz, g_pcx_decode_buf, &_dw, &_dh, 0);
-              if (_dw > 0 && _dh > 0 && (u32)_dw * _dh <= (u32)AG_SCREEN_PIXELS) {
-                  c->dec_buf = (u8*)malloc((u32)_dw * _dh);
-                  if (c->dec_buf) {
-                      memcpy(c->dec_buf, g_pcx_decode_buf, (u32)_dw * _dh);
-                      c->dec_w = _dw; c->dec_h = _dh;
+              if (_dw > 0 && _dh > 0) {
+                  c->dec_w = _dw; c->dec_h = _dh;
+                  if ((u32)_dw * _dh <= (u32)AG_SCREEN_PIXELS) {
+                      c->dec_buf = (u8*)malloc((u32)_dw * _dh);
+                      if (c->dec_buf) memcpy(c->dec_buf, g_pcx_decode_buf, (u32)_dw * _dh);
                   }
               }
             }
@@ -2400,11 +2580,44 @@ void engine_change_protagonist(const char* char_id) {
 /* Configura los colores del popup selector de protagonistas.
  * bg=fondo panel, border=borde, active=celda activa, hover=celda hover.
  * Los valores son indices de paleta VGA (0-255). */
+void engine_set_party_btn_sprite(const char* pcx_id, const char* pcx_hover_id) {
+    u32 sz;
+    if (g_party_btn.buf)     { free(g_party_btn.buf);     g_party_btn.buf    = NULL; g_party_btn.size    = 0; }
+    if (g_party_btn_hov.buf) { free(g_party_btn_hov.buf); g_party_btn_hov.buf= NULL; g_party_btn_hov.size= 0; }
+    if (pcx_id && pcx_id[0]) {
+        g_party_btn.buf  = (u8*)engine_dat_load_gfx(pcx_id, &sz); g_party_btn.size  = sz; }
+    if (pcx_hover_id && pcx_hover_id[0]) {
+        g_party_btn_hov.buf = (u8*)engine_dat_load_gfx(pcx_hover_id, &sz); g_party_btn_hov.size = sz; }
+}
+
+void engine_set_ui_colors(u8 bg, u8 action, u8 sel, u8 inv_hov) {
+    g_ui_col_bg      = bg;
+    g_ui_col_action  = action;
+    g_ui_col_sel     = sel;
+    g_ui_col_inv_hov = inv_hov;
+}
+
+void engine_set_menu_colors(u8 bg, u8 btn, u8 sel, u8 brd, u8 txt, u8 act) {
+    g_menu_col_bg  = bg;
+    g_menu_col_btn = btn;
+    g_menu_col_sel = sel;
+    g_menu_col_brd = brd;
+    g_menu_col_txt = txt;
+    g_menu_col_act = act;
+}
+
 void engine_set_party_popup_colors(u8 bg, u8 border, u8 active, u8 hover) {
     g_popup_col_bg     = bg;
     g_popup_col_border = border;
     g_popup_col_active = active;
     g_popup_col_hover  = hover;
+}
+
+void engine_set_dialogue_colors(u8 bg, u8 brd, u8 txt, u8 sel) {
+    g_dlg_col_bg  = bg;
+    g_dlg_col_brd = brd;
+    g_dlg_col_txt = txt;
+    g_dlg_col_sel = sel;
 }
 
 /* Añade un personaje al grupo de protagonistas.
@@ -3290,11 +3503,12 @@ static void _render_char_item(int i) {
     } else {
         _pcx_decode(c->pcx_buf, c->pcx_size, g_pcx_decode_buf, &sw, &sh, 0);
         pixels = g_pcx_decode_buf;
+        /* Guardar dimensiones siempre — hitbox no depende del cache de pixeles */
+        c->dec_w = sw; c->dec_h = sh;
         if ((u32)sw * sh <= (u32)AG_SCREEN_PIXELS) {
             c->dec_buf = (u8*)malloc((u32)sw * sh);
             if (c->dec_buf) {
                 memcpy(c->dec_buf, g_pcx_decode_buf, (u32)sw * sh);
-                c->dec_w = sw; c->dec_h = sh;
                 pixels = c->dec_buf;
             }
         }
@@ -3322,7 +3536,7 @@ static void _render_char_item(int i) {
     /* Limite vertical: en modo normal no pintar sobre la UI */
     { s16 max_vy = g_bg_fullscreen ? (s16)AG_SCREEN_H : (s16)UI_Y;
 
-    if (pct >= 100 && !(c->dir_left && (c->cur_anim == ANIM_IDLE || (c->cur_anim == ANIM_TALK && !c->anims[ANIM_TALK_LEFT].id[0])))) {
+    if (pct >= 100 && !(c->dir_left && (c->cur_anim == ANIM_IDLE || (c->cur_anim == ANIM_TALK && !c->anims[ANIM_TALK_LEFT].id[0]) || c->cur_anim == ANIM_GIVE))) {
         /* Path directo sin escala: usar spr_cache si disponible */
         if (c->spr_cache) {
             _spr_cache_render(c->spr_cache, sx, c->y, frame_x, fw, max_vy);
@@ -3347,7 +3561,7 @@ static void _render_char_item(int i) {
         u16 dh = (u16)((u32)sh * pct / 100); if (dh < 1) dh = 1;
         s16 bx = (s16)(sx - (s16)(dw / 2));
         s16 by = (s16)(c->y - (s16)dh);
-        u8  flip = ((c->cur_anim == ANIM_IDLE || (c->cur_anim == ANIM_TALK && !c->anims[ANIM_TALK_LEFT].id[0])) && c->dir_left);
+        u8  flip = (c->dir_left && (c->cur_anim == ANIM_IDLE || (c->cur_anim == ANIM_TALK && !c->anims[ANIM_TALK_LEFT].id[0]) || c->cur_anim == ANIM_GIVE));
         u32 fy16 = 0;
         u16 y;
         for (y = 0; y < dh; y++, fy16 += step_y) {
@@ -3495,6 +3709,15 @@ void engine_set_char_talk_anim_left(const char* char_id, const char* pcx, int fr
     c->anims[ANIM_TALK_LEFT].flip   = 0;
 }
 
+void engine_set_char_give_anim(const char* char_id, const char* pcx, int frames, int fps, int fw) {
+    Char* c = _find_char(char_id); if (!c) return;
+    _strlcpy(c->anims[ANIM_GIVE].id, pcx, 32);
+    c->anims[ANIM_GIVE].frames = (u8)(frames > 0 ? frames : 1);
+    c->anims[ANIM_GIVE].fps    = (u8)(fps > 0 ? fps : 8);
+    c->anims[ANIM_GIVE].fw     = (u16)(fw > 0 ? fw : 0);
+    c->anims[ANIM_GIVE].flip   = 0;
+}
+
 /* Activa animación de hablar del protagonista según dirección actual y programa
  * restauración al idle tras duration_ms. Sin efecto si no hay talk anim definida. */
 static void _protagonist_talk_start(u32 duration_ms) {
@@ -3561,6 +3784,45 @@ static void _talk_restore_check(void) {
         c->pcx_size = sz3;
         _strlcpy(c->pcx_loaded, c->anims[g_talk_idle_role].id, 32);
     }
+}
+
+/* Reproduce la animación dar del protagonista (1 ciclo) y programa vuelta a idle. */
+static void _protagonist_give_start(void) {
+    Char* c; int give_role, idle_role; u32 gsz; u16 _dw,_dh;
+    if (!g_char_count) return;
+    c = &g_chars[g_protagonist];
+    give_role = c->anims[ANIM_GIVE].id[0] ? ANIM_GIVE :
+                (c->anims[ANIM_TALK].id[0] ? ANIM_TALK : -1);
+    if (give_role < 0) return;
+    /* Idle de restauración */
+    if ((c->cur_anim==ANIM_WALK_UP||c->cur_anim==ANIM_IDLE_UP) && c->anims[ANIM_IDLE_UP].id[0])
+        idle_role = ANIM_IDLE_UP;
+    else if ((c->cur_anim==ANIM_WALK_DOWN||c->cur_anim==ANIM_IDLE_DOWN) && c->anims[ANIM_IDLE_DOWN].id[0])
+        idle_role = ANIM_IDLE_DOWN;
+    else idle_role = ANIM_IDLE;
+    CHAR_SET_ANIM(c, give_role);
+    c->frame_cur = 0; c->frame_timer = g_ticks_ms;
+    if (strcmp(c->anims[give_role].id, c->pcx_loaded) != 0) {
+        if (c->pcx_buf) { free(c->pcx_buf); c->pcx_buf = NULL; }
+        if (c->dec_buf) { free(c->dec_buf); c->dec_buf = NULL; c->dec_w = 0; c->dec_h = 0; }
+        _spr_cache_free(c->spr_cache); c->spr_cache = NULL;
+        c->pcx_buf = (u8*)engine_dat_load_gfx(c->anims[give_role].id, &gsz);
+        c->pcx_size = gsz;
+        _strlcpy(c->pcx_loaded, c->anims[give_role].id, 32);
+        if (c->pcx_buf) {
+            _dw=0; _dh=0;
+            _pcx_decode(c->pcx_buf,gsz,g_pcx_decode_buf,&_dw,&_dh,0);
+            if (_dw>0&&_dh>0&&(u32)_dw*_dh<=(u32)AG_SCREEN_PIXELS) {
+                c->dec_buf=(u8*)malloc((u32)_dw*_dh);
+                if(c->dec_buf){memcpy(c->dec_buf,g_pcx_decode_buf,(u32)_dw*_dh);c->dec_w=_dw;c->dec_h=_dh;}
+            }
+        }
+    }
+    { int _gf = c->anims[give_role].frames > 0 ? c->anims[give_role].frames : 1;
+      int _gp = c->anims[give_role].fps    > 0 ? c->anims[give_role].fps    : 8;
+      g_talk_restore_ms = g_ticks_ms + (u32)(_gf * 1000 / _gp) + 100u;
+    }
+    g_talk_idle_role = (u8)idle_role;
 }
 
 /* Dibuja en orden de registro los objetos con bg_layer=1 (antes de personajes). */
@@ -3872,9 +4134,10 @@ static void _draw_text_outlined_centered(s16 x0, s16 x1, s16 y, u8 font_idx,
 #define INV_SLOT_H    22   /* 2x22+1gap=45 en INV_H(45)px */
 
 /* -- Party button y popup (entre las flechas de inventario) ----------------- */
-#define PARTY_BTN_X  160   /* centro x del circulo (ARROW_X + ARROW_W/2) */
-#define PARTY_BTN_Y  177   /* centro y: frontera entre los dos slots de flecha */
-#define PARTY_BTN_R    4   /* radio del circulo */
+#define PARTY_BTN_W   ACTION_LINE_H              /* ancho area boton = alto action line */
+#define PARTY_BTN_X  (ACTION_LINE_H / 2)         /* centro x en action line */
+#define PARTY_BTN_Y  (UI_Y + ACTION_LINE_H / 2)  /* centro y en action line */
+#define PARTY_BTN_R    4                          /* radio fallback circulo */
 /* Popup grid: 4 col x max 2 filas, celdas cuadradas, sin nombres */
 #define POPUP_COLS     4                              /* columnas del grid */
 #define POPUP_CELL    28                              /* tamaño celda (px) */
@@ -3934,6 +4197,7 @@ static void _load_verbset_from_dat(const char* vs_id) {
             ve->normal_color = 15; /* blanco por defecto */
             ve->hover_color  = 15;
         }
+        ve->is_give = 0; /* establecido via engine_set_give_verb() desde codegen */
         DBG("  verb[%d]: id='%s' label='%s' mv=%d approach=%d col=%d row=%d nc=%d hc=%d\n",
             (int)g_verb_count, ve->id, ve->label,
             (int)ve->is_movement, (int)ve->approach_obj,
@@ -3947,21 +4211,17 @@ static void _load_verbset_from_dat(const char* vs_id) {
 void engine_render_verbset(void) {
     int i, vi, r;
 
-    /* Fondo negro (indice 1) en zona UI */
+    /* Fondo de zona UI */
     for (r = UI_Y; r < AG_SCREEN_H; r++)
-        memset(g_backbuf + r * AG_SCREEN_W, 1, AG_SCREEN_W);
+        memset(g_backbuf + r * AG_SCREEN_W, g_ui_col_bg, AG_SCREEN_W);
 
     if (g_verb_count == 0 || !g_fonts[VERB_FONT].ok) return;
 
-    /* Frase de accion: integrada en la banda superior de la UI (y = UI_Y + 1).
-     * Usa el normal_color del verbo de movimiento (isMovement=1). */
+    /* Frase de accion: integrada en la banda superior de la UI (y = UI_Y + 1). */
     if (g_action_text[0]) {
-        int _ai; u8 _ac = 15;
-        for (_ai = 0; _ai < g_verb_count; _ai++)
-            if (g_verbs[_ai].is_movement) { _ac = g_verbs[_ai].normal_color; break; }
         _draw_text_outlined_centered(0, AG_SCREEN_W,
             (s16)(UI_Y + 1),
-            VERB_FONT, _ac, 1, g_action_text);
+            VERB_FONT, g_ui_col_action, 1, g_action_text);
     }
 
     /* Grid 3x3: texto centrado en su celda, hover resaltado */
@@ -3987,7 +4247,7 @@ void engine_render_verbset(void) {
 
         /* Color: amarillo si seleccionado, hover_color si hover, normal_color si no.
          * No se dibuja fondo de hover — solo cambia el color del texto. */
-        if (_str_eq(ve->id, g_selected_verb)) color = 14;             /* amarillo: seleccionado */
+        if (_str_eq(ve->id, g_selected_verb)) color = g_ui_col_sel;    /* verbo seleccionado */
         else if (hover)                        color = ve->hover_color;
         else                                   color = ve->normal_color;
 
@@ -4013,7 +4273,7 @@ void engine_render_verbset(void) {
                     s16 fx, fy;
                     for (fy = sy; fy < sy+INV_SLOT_H && fy < AG_SCREEN_H; fy++)
                         for (fx = sx; fx < sx+INV_SLOT_W && fx < AG_SCREEN_W; fx++)
-                            g_backbuf[fy*AG_SCREEN_W+fx] = 1;
+                            g_backbuf[fy*AG_SCREEN_W+fx] = g_ui_col_inv_hov;
                 }
                 /* Icono PCX centrado */
                 if (slot->pcx_buf) {
@@ -4095,26 +4355,7 @@ void engine_render_verbset(void) {
                                    VERB_FONT, 15, 0, "^");
               }
           }
-          /* Boton de party: circulo entre las dos flechas — solo si hay >1 miembro */
-          if (g_party_count > 1) {
-              int _hover_btn = (g_mouse.x >= PARTY_BTN_X - 6 &&
-                                g_mouse.x <= PARTY_BTN_X + 6 &&
-                                g_mouse.y >= PARTY_BTN_Y - 6 &&
-                                g_mouse.y <= PARTY_BTN_Y + 6);
-              u8 _bcol = (g_party_popup_open || _hover_btn) ? 15 : 7;
-              { int _bpy, _bpx;
-                for (_bpy = PARTY_BTN_Y - PARTY_BTN_R; _bpy <= PARTY_BTN_Y + PARTY_BTN_R; _bpy++) {
-                    if (_bpy < UI_Y || _bpy >= AG_SCREEN_H) continue;
-                    for (_bpx = PARTY_BTN_X - PARTY_BTN_R; _bpx <= PARTY_BTN_X + PARTY_BTN_R; _bpx++) {
-                        if (_bpx < 0 || _bpx >= AG_SCREEN_W) continue;
-                        { int _bdx = _bpx - PARTY_BTN_X, _bdy = _bpy - PARTY_BTN_Y;
-                          if (_bdx*_bdx + _bdy*_bdy <= PARTY_BTN_R*PARTY_BTN_R)
-                              g_backbuf[_bpy * AG_SCREEN_W + _bpx] = _bcol;
-                        }
-                    }
-                }
-              }
-          }
+          /* (boton de party movido a action line — ver bloque independiente abajo) */
           if (g_inv_scroll + visible < _inv_prot_count()) {
               ArrowSprite* asp = (hover_dn && g_arrow_dn_hover.buf) ? &g_arrow_dn_hover
                                : (g_arrow_dn.buf)                   ? &g_arrow_dn
@@ -4146,6 +4387,50 @@ void engine_render_verbset(void) {
                                    VERB_FONT, 15, 0, "v");
               }
           }
+        }
+    }
+
+    /* Boton de cambio de protagonista: extremo izquierdo de la action line */
+    if (g_party_count > 1) {
+        int _hbtn = (g_mouse.x >= 0 && g_mouse.x < PARTY_BTN_W &&
+                     g_mouse.y >= UI_Y && g_mouse.y < UI_Y + ACTION_LINE_H);
+        ArrowSprite* _bsp = (_hbtn && g_party_btn_hov.buf) ? &g_party_btn_hov
+                          : (g_party_btn.buf)               ? &g_party_btn
+                          : NULL;
+        if (_bsp) {
+            u16 _biw, _bih; s16 _bix, _biy;
+            _pcx_decode(_bsp->buf, _bsp->size, g_pcx_decode_buf, &_biw, &_bih, 0);
+            { u16 _bdw = (_biw > (u16)PARTY_BTN_W) ? (u16)PARTY_BTN_W : _biw;
+              u16 _bdh = (_bih > (u16)ACTION_LINE_H) ? (u16)ACTION_LINE_H : _bih;
+              s16 _box = (s16)((PARTY_BTN_W - _bdw) / 2);
+              s16 _boy = (s16)(UI_Y + (ACTION_LINE_H - _bdh) / 2);
+              for (_biy = 0; _biy < (s16)_bdh; _biy++) {
+                  s16 _bvy = (s16)(_boy + _biy);
+                  s16 _bsy = (s16)(((u32)_biy * _bih) / _bdh);
+                  if (_bvy < 0 || _bvy >= AG_SCREEN_H) continue;
+                  for (_bix = 0; _bix < (s16)_bdw; _bix++) {
+                      s16 _bvx = (s16)(_box + _bix);
+                      s16 _bsx = (s16)(((u32)_bix * _biw) / _bdw);
+                      if (_bvx < 0 || _bvx >= AG_SCREEN_W) continue;
+                      { u8 _bpx = g_pcx_decode_buf[_bsy * _biw + _bsx];
+                        if (_bpx) g_backbuf[_bvy * AG_SCREEN_W + _bvx] = _bpx; }
+                  }
+              }
+            }
+        } else {
+            u8 _bcol = (g_party_popup_open || _hbtn) ? 15 : 7;
+            { int _bpy, _bpx;
+              for (_bpy = PARTY_BTN_Y - PARTY_BTN_R; _bpy <= PARTY_BTN_Y + PARTY_BTN_R; _bpy++) {
+                  if (_bpy < UI_Y || _bpy >= AG_SCREEN_H) continue;
+                  for (_bpx = PARTY_BTN_X - PARTY_BTN_R; _bpx <= PARTY_BTN_X + PARTY_BTN_R; _bpx++) {
+                      if (_bpx < 0 || _bpx >= AG_SCREEN_W) continue;
+                      { int _bdx = _bpx - PARTY_BTN_X, _bdy = _bpy - PARTY_BTN_Y;
+                        if (_bdx*_bdx + _bdy*_bdy <= PARTY_BTN_R*PARTY_BTN_R)
+                            g_backbuf[_bpy * AG_SCREEN_W + _bpx] = _bcol;
+                      }
+                  }
+              }
+            }
         }
     }
 
@@ -4461,6 +4746,7 @@ void engine_flip(void) {
     }
 
     engine_audio_update();
+    if (g_pre_flip_fn) g_pre_flip_fn();
     _vga_flip();
 }
 
@@ -4839,18 +5125,45 @@ void engine_show_text_ex(const char* locale_key, u8 color, u32 duration_ms) {
     }
 }
 
+/* Word-wrap: inserta \n en src → dst para que ningun segmento supere 'cols' chars.
+ * No usa malloc; reemplaza espacios entre palabras por \n cuando es necesario.
+ * Si una palabra es mas larga que cols se parte forzosamente. */
+static void _word_wrap(const char* src, char* dst, int max_dst, int cols) {
+    int col = 0, di = 0;
+    const char* p = src;
+    while (*p && di < max_dst - 1) {
+        if (*p == '\n') { dst[di++] = '\n'; col = 0; p++; continue; }
+        if (*p == ' ') {
+            /* look-ahead: longitud de la proxima palabra */
+            const char* nw = p + 1; int wl = 0;
+            while (nw[wl] && nw[wl] != ' ' && nw[wl] != '\n') wl++;
+            if (col + 1 + wl > cols) { dst[di++] = '\n'; col = 0; p++; }
+            else                      { dst[di++] = ' ';  col++;   p++; }
+            continue;
+        }
+        dst[di++] = *p++; col++;
+        if (col >= cols && *p && *p != ' ' && *p != '\n' && di < max_dst - 1)
+            { dst[di++] = '\n'; col = 0; }
+    }
+    dst[di] = 0;
+}
+
 /* Muestra texto con animacion de hablar del protagonista (bloqueante, click-to-advance).
  * char_id ignorado: siempre usa el protagonista activo (g_protagonist).
  * text_key: clave de locale (ej: "obj.ID.verb.ID"). Soporta \n para multilinea.
  * La animacion de hablar se selecciona segun la direccion actual del protagonista. */
 void engine_say(const char* char_id, const char* text_key) {
     const char* txt;
+    char _wb[MAX_TEXT_LEN+1];
     s16 char_sx = (s16)(AG_SCREEN_W / 2); s16 oy = 30;
     u32 duration_ms, until;
     int len, nlines; const char* p;
     (void)char_id; /* siempre usa el protagonista activo */
     txt = engine_text(text_key);
     if (!txt || !txt[0] || txt == text_key) return;
+    /* Word-wrap: 38 cols para FONT_SMALL 8px (304px usables de 320) */
+    _word_wrap(txt, _wb, MAX_TEXT_LEN+1, 38);
+    txt = _wb;
     /* Contar chars y lineas */
     len = 0; nlines = 1;
     for (p = txt; *p; p++) { if (*p == '\n') nlines++; len++; }
@@ -4893,6 +5206,7 @@ void engine_say(const char* char_id, const char* text_key) {
  * anim_role: nombre de rol ("talk","talk_up","walk_left","idle_down", etc.) */
 void engine_say_anim(const char* char_id, const char* text_key, const char* anim_role) {
     const char* txt;
+    char _wb[MAX_TEXT_LEN+1];
     s16 char_sx = (s16)(AG_SCREEN_W / 2); s16 oy = 30;
     u32 duration_ms, until;
     int len, nlines; const char* p;
@@ -4901,6 +5215,8 @@ void engine_say_anim(const char* char_id, const char* text_key, const char* anim
     txt = engine_text(text_key);
     if (!txt || !txt[0] || txt == text_key) return;
     if (!anim_role || !anim_role[0]) { engine_say(char_id, text_key); return; }
+    _word_wrap(txt, _wb, MAX_TEXT_LEN+1, 38);
+    txt = _wb;
     len = 0; nlines = 1;
     for (p = txt; *p; p++) { if (*p == '\n') nlines++; len++; }
     if (g_char_count > 0) {
@@ -5204,9 +5520,80 @@ void engine_clear_text(void) {
  * =========================================================================== */
 #include "agemki_audio.h"
 
+#define MENU_COL_BG  g_menu_col_bg
+#define MENU_COL_BTN g_menu_col_btn
+#define MENU_COL_SEL g_menu_col_sel
+#define MENU_COL_BRD g_menu_col_brd
+#define MENU_COL_TXT g_menu_col_txt
+#define MENU_COL_ACT g_menu_col_act
+
 /* ===========================================================================
  * S16 - DIALOGOS
  * =========================================================================== */
+
+/* Panel de opciones: lineas precalculadas con word-wrap y scroll.
+ * DLG_LINE_H: pixels por linea | DLG_VIS: lineas visibles | DLG_COLS: chars/linea */
+#define DLG_LINE_H   10
+#define DLG_VIS      5            /* floor(UI_H(56) / DLG_LINE_H(10)) = 5 */
+#define DLG_COLS     35           /* (320-20)/8 = 37; dejar margen para scroll */
+#define DLG_MAX_TOT  (MAX_DIALOGUE_OPTS * 4)
+
+typedef struct { int opt_idx; char text[40]; } DlgLine;
+
+static int                    _dlg_panel_active = 0;
+static const DialogueNode*    _dlg_panel_node   = NULL;
+static int                    _dlg_panel_cval[MAX_DIALOGUE_OPTS];
+static int                    _dlg_panel_cnv    = 0;
+/* hov: -1=nada  >=0=opt_idx  -2=scroll_up  -3=scroll_dn */
+static int                    _dlg_panel_hov    = -1;
+static DlgLine                _dlg_lines[DLG_MAX_TOT];
+static int                    _dlg_total_lines  = 0;
+static int                    _dlg_scroll       = 0;
+
+/* Precalcula lineas con word-wrap para todas las opciones visibles */
+static void _dlg_build_lines(void) {
+    int i; char wb[MAX_TEXT_LEN+1];
+    _dlg_total_lines = 0;
+    for (i = 0; i < _dlg_panel_cnv; i++) {
+        const char* raw = engine_text(_dlg_panel_node->options[_dlg_panel_cval[i]].text_key);
+        const char* p; int li = 0;
+        _word_wrap(raw, wb, MAX_TEXT_LEN+1, DLG_COLS);
+        p = wb;
+        while (*p && _dlg_total_lines < DLG_MAX_TOT && li < 4) {
+            DlgLine* dl = &_dlg_lines[_dlg_total_lines++];
+            int tl = 0;
+            dl->opt_idx = i;
+            while (*p && *p != '\n' && tl < 39) dl->text[tl++] = *p++;
+            dl->text[tl] = '\0';
+            if (*p == '\n') p++;
+            li++;
+        }
+    }
+}
+
+static void _dlg_panel_draw(void) {
+    int _j, _vis;
+    if (!_dlg_panel_active || !_dlg_panel_node) return;
+    _vis = _dlg_total_lines - _dlg_scroll;
+    if (_vis > DLG_VIS) _vis = DLG_VIS;
+    _fill_rect(0, (s16)UI_Y, (s16)AG_SCREEN_W, (s16)UI_H, g_dlg_col_bg);
+    _draw_rect_border(0, (s16)UI_Y, (s16)AG_SCREEN_W, (s16)UI_H, g_dlg_col_brd);
+    for (_j = 0; _j < _vis; _j++) {
+        int _li = _dlg_scroll + _j;
+        s16 _ry = (s16)(UI_Y + _j * DLG_LINE_H);
+        if (_dlg_lines[_li].opt_idx == _dlg_panel_hov)
+            _fill_rect(1, _ry, (s16)(AG_SCREEN_W - 14), (s16)DLG_LINE_H, g_dlg_col_sel);
+        engine_draw_text((s16)7, (s16)(_ry+2), VERB_FONT, 0,              0, _dlg_lines[_li].text);
+        engine_draw_text((s16)6, (s16)(_ry+1), VERB_FONT, g_dlg_col_txt,  0, _dlg_lines[_li].text);
+    }
+    /* Indicadores de scroll en la columna derecha */
+    if (_dlg_scroll > 0)
+        engine_draw_text((s16)(AG_SCREEN_W-10), (s16)(UI_Y+1),
+                         VERB_FONT, g_dlg_col_txt, 0, "^");
+    if (_dlg_scroll + DLG_VIS < _dlg_total_lines)
+        engine_draw_text((s16)(AG_SCREEN_W-10), (s16)(UI_Y+(_vis-1)*DLG_LINE_H+1),
+                         VERB_FONT, g_dlg_col_txt, 0, "v");
+}
 
 void engine_run_dialogue(const DialogueNode* nodes, int n, const char* start_id) {
     const DialogueNode* cur = NULL;
@@ -5226,6 +5613,11 @@ void engine_run_dialogue(const DialogueNode* nodes, int n, const char* start_id)
 
         for (li = 0; li < cur->num_lines; li++) {
             const DialogueLine* ln = &cur->lines[li];
+            /* Saltar línea si char_filter no coincide con el protagonista activo */
+            if (ln->char_filter && ln->char_filter[0]) {
+                const char* _pid = (g_char_count > 0) ? g_chars[g_protagonist].id : "";
+                if (!_str_eq(ln->char_filter, _pid)) continue;
+            }
             const char* txt = engine_text(ln->text_key);
             DBG("dlg line %d: speaker=\'%s\' txt=\'%s\'\n", li, ln->speaker_id, txt ? txt : "(null)");
 
@@ -5255,6 +5647,11 @@ void engine_run_dialogue(const DialogueNode* nodes, int n, const char* start_id)
             }
 
             if (!txt || !txt[0] || txt == ln->text_key) continue;
+
+            /* Word-wrap antes de renderizar */
+            { static char _dlg_wb[MAX_TEXT_LEN+1];
+              _word_wrap(txt, _dlg_wb, MAX_TEXT_LEN+1, 38);
+              txt = _dlg_wb; }
 
             /* Calcular posicion X base y color */
             s16 ox = -1, oy = 10;
@@ -5358,20 +5755,83 @@ void engine_run_dialogue(const DialogueNode* nodes, int n, const char* start_id)
             continue;
         }
 
-        /* Varias opciones: elegir primera valida (TODO: UI) */
-        { int chosen = -1;
-          for (i = 0; i < cur->num_options; i++) {
-              if (!cur->options[i].condition[0] ||
-                  engine_eval_cond(cur->options[i].condition)) {
-                  chosen = i; break;
-              }
-          }
-          if (chosen < 0) break;
-          const char* next = cur->options[chosen].next_node_id;
-          if (!next || !next[0]) break;
-          cur = NULL;
-          for (i = 0; i < n; i++)
-              if (_str_eq(nodes[i].id, next)) { cur = &nodes[i]; break; }
+        /* Varias opciones: panel de seleccion via pre-flip hook — dibuja sobre backbuf
+         * ANTES de _vga_flip para evitar el double-write que causaba parpadeo. */
+        {
+            int _cnv = 0, _chosen = -1;
+
+            /* Filtrar opciones por condicion y char_filter */
+            { const char* _opid = (g_char_count > 0) ? g_chars[g_protagonist].id : "";
+            for (i = 0; i < cur->num_options; i++) {
+                if (!cur->options[i].text_key || !cur->options[i].text_key[0]) continue;
+                if (cur->options[i].char_filter && cur->options[i].char_filter[0] &&
+                    !_str_eq(cur->options[i].char_filter, _opid)) continue;
+                if (!cur->options[i].condition[0] ||
+                    engine_eval_cond(cur->options[i].condition))
+                    _dlg_panel_cval[_cnv++] = i;
+            }
+            }
+            _dlg_panel_cnv    = _cnv;
+            _dlg_panel_node   = cur;
+            _dlg_panel_hov    = -1;
+            _dlg_scroll       = 0;
+            _dlg_panel_active = 1;
+            _dlg_build_lines();
+            g_pre_flip_fn     = _dlg_panel_draw;
+
+            while (g_running && _chosen < 0 && _cnv > 0) {
+                int _vis = _dlg_total_lines - _dlg_scroll;
+                if (_vis > DLG_VIS) _vis = DLG_VIS;
+
+                /* Hover: distingue opcion, scroll-up (-2) y scroll-dn (-3) */
+                if ((int)g_mouse.y >= UI_Y && (int)g_mouse.y < UI_Y + UI_H) {
+                    int _hi  = ((int)g_mouse.y - UI_Y) / DLG_LINE_H;
+                    int _li  = _dlg_scroll + _hi;
+                    int _mx  = (int)g_mouse.x;
+                    if (_hi >= 0 && _hi < _vis && _li < _dlg_total_lines) {
+                        /* Zona scroll (derecha 14px) en primera/ultima fila visible */
+                        if (_mx >= AG_SCREEN_W - 14 && _hi == 0 && _dlg_scroll > 0)
+                            _dlg_panel_hov = -2;
+                        else if (_mx >= AG_SCREEN_W - 14 && _hi == _vis - 1 &&
+                                 _dlg_scroll + DLG_VIS < _dlg_total_lines)
+                            _dlg_panel_hov = -3;
+                        else
+                            _dlg_panel_hov = _dlg_lines[_li].opt_idx;
+                    } else {
+                        _dlg_panel_hov = -1;
+                    }
+                } else {
+                    _dlg_panel_hov = -1;
+                }
+
+                engine_flip();
+                if (!engine_process_input()) break;
+
+                if (g_mouse.buttons & 1) {
+                    if (_dlg_panel_hov >= 0) {
+                        _chosen = _dlg_panel_cval[_dlg_panel_hov];
+                        while (g_mouse.buttons) _mouse_poll();
+                    } else if (_dlg_panel_hov == -2) {
+                        if (_dlg_scroll > 0) _dlg_scroll--;
+                        while (g_mouse.buttons) _mouse_poll();
+                    } else if (_dlg_panel_hov == -3) {
+                        if (_dlg_scroll + DLG_VIS < _dlg_total_lines) _dlg_scroll++;
+                        while (g_mouse.buttons) _mouse_poll();
+                    }
+                }
+            }
+
+            g_pre_flip_fn     = NULL;
+            _dlg_panel_active = 0;
+            _dlg_panel_node   = NULL;
+
+            if (_cnv == 0 || _chosen < 0) break;
+            { const char* _nx = cur->options[_chosen].next_node_id;
+              if (!_nx || !_nx[0]) break;
+              cur = NULL;
+              for (i = 0; i < n; i++)
+                  if (_str_eq(nodes[i].id, _nx)) { cur = &nodes[i]; break; }
+            }
         }
     }
     _overlay_clear_all();
@@ -5387,19 +5847,51 @@ void engine_run_dialogue(const DialogueNode* nodes, int n, const char* start_id)
  * S17 - HANDLERS DE EVENTOS
  * =========================================================================== */
 
+/* Helper interno: busca handler verbo+obj con prioridad char-específico > genérico.
+ * is_inv: 0=escena, 1=inventario. Ignora obj2_id (usar_con usa _find_usar_con_handler). */
+static int _find_verb_handler(const char* verb_id, const char* obj_id, int is_inv) {
+    int i, generic = -1;
+    const char* pid = (g_char_count > 0) ? g_chars[g_protagonist].id : "";
+    for (i = 0; i < g_verb_handler_count; i++) {
+        VerbHandler* h = &g_verb_handlers[i];
+        if (!h->fn) continue;
+        if (!_str_eq(h->verb_id, verb_id)) continue;
+        if (!_str_eq(h->obj_id,  obj_id))  continue;
+        if (h->is_inv != is_inv) continue;
+        if (h->char_id[0]) {
+            if (_str_eq(h->char_id, pid)) return i; /* char match exacto — máxima prioridad */
+        } else {
+            if (generic < 0) generic = i; /* primer genérico */
+        }
+    }
+    return generic;
+}
+
 void engine_on_verb_object(const char* verb_id, const char* obj_id,
                            void (*handler)(void)) {
     if (g_verb_handler_count >= MAX_VERB_HANDLERS) return;
-    if (!verb_id || !verb_id[0] || !obj_id || !obj_id[0]) return; /* ignorar vacíos */
+    if (!verb_id || !verb_id[0] || !obj_id || !obj_id[0]) return;
     _strlcpy(g_verb_handlers[g_verb_handler_count].verb_id, verb_id, 32);
     _strlcpy(g_verb_handlers[g_verb_handler_count].obj_id,  obj_id,  32);
     g_verb_handlers[g_verb_handler_count].obj2_id[0] = '\0';
     g_verb_handlers[g_verb_handler_count].is_inv = 0;
+    g_verb_handlers[g_verb_handler_count].char_id[0] = '\0';
     g_verb_handlers[g_verb_handler_count].fn = handler;
     DBG("on_verb_object[%d]: verb='%s' obj='%s' fn=%s\n",
-        g_verb_handler_count,
-        verb_id, obj_id,
-        handler ? "custom" : "NULL(pickup)");
+        g_verb_handler_count, verb_id, obj_id, handler ? "custom" : "NULL(pickup)");
+    g_verb_handler_count++;
+}
+
+void engine_on_verb_object_char(const char* verb_id, const char* obj_id,
+                                const char* char_id, void (*handler)(void)) {
+    if (g_verb_handler_count >= MAX_VERB_HANDLERS) return;
+    if (!verb_id || !verb_id[0] || !obj_id || !obj_id[0]) return;
+    _strlcpy(g_verb_handlers[g_verb_handler_count].verb_id, verb_id, 32);
+    _strlcpy(g_verb_handlers[g_verb_handler_count].obj_id,  obj_id,  32);
+    g_verb_handlers[g_verb_handler_count].obj2_id[0] = '\0';
+    g_verb_handlers[g_verb_handler_count].is_inv = 0;
+    _strlcpy(g_verb_handlers[g_verb_handler_count].char_id, char_id ? char_id : "", 32);
+    g_verb_handlers[g_verb_handler_count].fn = handler;
     g_verb_handler_count++;
 }
 
@@ -5412,16 +5904,27 @@ void engine_on_verb_inv(const char* verb_id, const char* inv_obj_id,
     _strlcpy(g_verb_handlers[g_verb_handler_count].obj_id,  inv_obj_id, 32);
     g_verb_handlers[g_verb_handler_count].obj2_id[0] = '\0';
     g_verb_handlers[g_verb_handler_count].is_inv = 1;
+    g_verb_handlers[g_verb_handler_count].char_id[0] = '\0';
     g_verb_handlers[g_verb_handler_count].fn = handler;
     DBG("on_verb_inv[%d]: verb='%s' inv='%s'\n",
         g_verb_handler_count, verb_id, inv_obj_id);
     g_verb_handler_count++;
 }
 
-/* Usar objeto inventario CON otro objeto (inv, escena o personaje).
- * require_both_inv=1: el script solo se ejecuta si el objeto Y tambien
- * esta en el inventario del jugador; en caso contrario muestra
- * sys.usar_con.no_inv y cancela la accion. */
+void engine_on_verb_inv_char(const char* verb_id, const char* inv_obj_id,
+                             const char* char_id, void (*handler)(void)) {
+    if (g_verb_handler_count >= MAX_VERB_HANDLERS) return;
+    if (!verb_id || !verb_id[0] || !inv_obj_id || !inv_obj_id[0]) return;
+    _strlcpy(g_verb_handlers[g_verb_handler_count].verb_id, verb_id, 32);
+    _strlcpy(g_verb_handlers[g_verb_handler_count].obj_id,  inv_obj_id, 32);
+    g_verb_handlers[g_verb_handler_count].obj2_id[0] = '\0';
+    g_verb_handlers[g_verb_handler_count].is_inv = 1;
+    _strlcpy(g_verb_handlers[g_verb_handler_count].char_id, char_id ? char_id : "", 32);
+    g_verb_handlers[g_verb_handler_count].fn = handler;
+    g_verb_handler_count++;
+}
+
+/* Usar objeto inventario CON otro objeto (inv, escena o personaje). */
 void engine_on_usar_con(const char* inv_obj_id, const char* target_id,
                         void (*handler)(void), int require_both_inv) {
     if (g_verb_handler_count >= MAX_VERB_HANDLERS) return;
@@ -5431,8 +5934,31 @@ void engine_on_usar_con(const char* inv_obj_id, const char* target_id,
     _strlcpy(g_verb_handlers[g_verb_handler_count].obj2_id, target_id ? target_id : "", 32);
     g_verb_handlers[g_verb_handler_count].is_inv = 1;
     g_verb_handlers[g_verb_handler_count].require_both_inv = require_both_inv ? 1 : 0;
+    g_verb_handlers[g_verb_handler_count].char_id[0] = '\0';
     g_verb_handlers[g_verb_handler_count].fn = handler;
     g_verb_handler_count++;
+}
+
+void engine_on_usar_con_char(const char* inv_obj_id, const char* target_id,
+                             const char* char_id, void (*handler)(void), int require_both_inv) {
+    if (g_verb_handler_count >= MAX_VERB_HANDLERS) return;
+    if (!inv_obj_id || !inv_obj_id[0]) return;
+    _strlcpy(g_verb_handlers[g_verb_handler_count].verb_id, "usar_con", 32);
+    _strlcpy(g_verb_handlers[g_verb_handler_count].obj_id,  inv_obj_id, 32);
+    _strlcpy(g_verb_handlers[g_verb_handler_count].obj2_id, target_id ? target_id : "", 32);
+    g_verb_handlers[g_verb_handler_count].is_inv = 1;
+    g_verb_handlers[g_verb_handler_count].require_both_inv = require_both_inv ? 1 : 0;
+    _strlcpy(g_verb_handlers[g_verb_handler_count].char_id, char_id ? char_id : "", 32);
+    g_verb_handlers[g_verb_handler_count].fn = handler;
+    g_verb_handler_count++;
+}
+
+const char* engine_get_dar_target(void) { return g_dar_target; }
+
+void engine_set_give_verb(const char* verb_id) {
+    int i;
+    for (i = 0; i < g_verb_count; i++)
+        if (_str_eq(g_verbs[i].id, verb_id)) { g_verbs[i].is_give = 1; return; }
 }
 
 void engine_on_object_click(const char* obj_id, void (*handler)(void)) {
@@ -5506,9 +6032,25 @@ static const char* _hit_char(s16 mx, s16 my) {
     int i;
     for (i = 0; i < g_char_count; i++) {
         Char* c = &g_chars[i];
+        s16 hw, hh;
         if (i == g_protagonist || !c->visible) continue;
-        if (mx >= c->x - 12 && mx <= c->x + 12 &&
-            my >= c->y - 32 && my <= c->y)
+        /* Escala igual que _render_char_item */
+        u8 _pct = ((u16)c->y < 200u) ? g_scale_lut[(u8)c->y] : (u8)_get_scale_pct(c->y);
+        if (_pct < 10) _pct = 100; /* sin zonas definidas → 1:1 */
+        if (c->dec_w > 0 && c->dec_h > 0) {
+            u16 _af = c->anims[c->cur_anim].frames > 1 ? c->anims[c->cur_anim].frames : 1;
+            hw = (s16)((u32)(c->dec_w / _af) * _pct / 100 / 2);
+            hh = (s16)((u32)c->dec_h      * _pct / 100);
+        } else {
+            /* Fallback: usar fw del slot de animación actual o 32px */
+            u16 _fw = c->anims[c->cur_anim].fw > 0 ? c->anims[c->cur_anim].fw : 32u;
+            hw = (s16)((u32)_fw * _pct / 100 / 2);
+            hh = (s16)((u32)(_fw * 2u) * _pct / 100);
+        }
+        if (hw < 6)  hw = 6;
+        if (hh < 12) hh = 12;
+        if (mx >= c->x - hw && mx <= c->x + hw &&
+            my >= c->y - hh  && my <= c->y)
             return c->id;
     }
     return "";
@@ -5574,12 +6116,6 @@ static void _draw_rect_border(s16 x, s16 y, s16 w, s16 h, u8 col) {
 }
 
 #define MENU_ITEMS    6
-#define MENU_COL_BG  16   /* fondo azul oscuro del menu */
-#define MENU_COL_BTN 20   /* boton normal */
-#define MENU_COL_SEL 26   /* boton seleccionado (cursor) */
-#define MENU_COL_BRD  0   /* borde negro */
-#define MENU_COL_TXT 15   /* texto blanco */
-#define MENU_COL_ACT 12   /* driver de audio activo — rojo/rosa (color 12 paleta VGA) */
 
 /* Claves de locale para el menú */
 static const char* g_menu_keys[MENU_ITEMS] = {
@@ -6642,23 +7178,28 @@ static void _show_no_inv_overlay(void) {
     }
 }
 
-/* Busca handler usar_con con soporte recíproco.
+/* Busca handler usar_con con soporte recíproco y prioridad char-específico > genérico.
  * Normal:    obj_id==inv_obj  && (obj2_id==target || obj2_id=="")
  * Recíproco: obj_id==target   && obj2_id==inv_obj  (match exacto)
  * Devuelve índice o -1. */
 static int _find_usar_con_handler(const char* inv_obj, const char* target) {
-    int i;
+    int i, generic = -1;
+    const char* pid = (g_char_count > 0) ? g_chars[g_protagonist].id : "";
     for (i = 0; i < g_verb_handler_count; i++) {
-        if (!_str_eq(g_verb_handlers[i].verb_id,"usar_con")) continue;
-        if (!g_verb_handlers[i].fn) continue;
-        if (_str_eq(g_verb_handlers[i].obj_id, inv_obj) &&
-            (_str_eq(g_verb_handlers[i].obj2_id, target) || g_verb_handlers[i].obj2_id[0]=='\0'))
-            return i;
-        if (_str_eq(g_verb_handlers[i].obj_id, target) &&
-            _str_eq(g_verb_handlers[i].obj2_id, inv_obj))
-            return i;
+        VerbHandler* h = &g_verb_handlers[i];
+        if (!_str_eq(h->verb_id,"usar_con")) continue;
+        if (!h->fn) continue;
+        int match = (_str_eq(h->obj_id, inv_obj) &&
+                     (_str_eq(h->obj2_id, target) || h->obj2_id[0]=='\0')) ||
+                    (_str_eq(h->obj_id, target) && _str_eq(h->obj2_id, inv_obj));
+        if (!match) continue;
+        if (h->char_id[0]) {
+            if (_str_eq(h->char_id, pid)) return i;
+        } else {
+            if (generic < 0) generic = i;
+        }
     }
-    return -1;
+    return generic;
 }
 
 static void _reset_verb_action(void) {
@@ -6772,6 +7313,21 @@ int engine_process_input(void) {
         const char* hover_char = (g_mouse.y < UI_Y && !hover[0]) ? _hit_char(wx, g_mouse.y) : "";
         Exit* hover_exit       = (g_mouse.y < UI_Y && !hover[0] && !hover_char[0]) ? _hit_exit(wx, g_mouse.y) : NULL;
 
+    /* Modo dar: mostrar "Dar [X] a [personaje]" al hover sobre personaje */
+    if (g_dar_mode) {
+        if (hover_char[0]) {
+            char _dc_nk[52]; const char* _dc_nm;
+            snprintf(_dc_nk, sizeof(_dc_nk), "char.%.39s.name", hover_char);
+            _dc_nm = engine_text(_dc_nk);
+            if (_str_eq(_dc_nm, _dc_nk)) _dc_nm = hover_char;
+            { char _act[80]; snprintf(_act, sizeof(_act), "%s %s", g_dar_base, _dc_nm);
+              _strlcpy(g_action_text, _act, sizeof(g_action_text)); }
+        } else {
+            _strlcpy(g_action_text, g_dar_base, sizeof(g_action_text));
+        }
+        goto _hover_block_end;
+    }
+
     /* Modo usar_con: mostrar "usar X con Y" al hover, o solo base si no hay objetivo */
     if (g_usar_con_mode) {
         const char* _uc_nm = NULL;
@@ -6858,7 +7414,7 @@ int engine_process_input(void) {
             snprintf(g_action_text, sizeof(g_action_text), "%s %s", verb_label, char_name);
             _strlcpy(g_hover_obj, hover_char, 32);
         } else if (!hover[0] && g_mouse.y >= INV_Y_START && g_inv_hover >= 0
-                   && !g_usar_con_mode) {
+                   && !g_usar_con_mode && !g_dar_mode) {
             /* Hover sobre objeto de inventario */
             InvSlot* _his = _inv_prot_slot(g_inv_hover);
             if (_his) { const char* inv_id = _his->obj_id;
@@ -6919,8 +7475,10 @@ int engine_process_input(void) {
 
     /* Click derecho: reset a verbo de movimiento */
     if ((g_mouse.buttons & 2) && !(prev_buttons & 2) && !g_script_running) {
-    /* Cancelar modo usar_con si activo, sino restablecer verbo */
+    /* Cancelar modo usar_con/dar si activo, sino restablecer verbo */
     g_usar_con_mode = 0; g_usar_con_inv[0] = '\0'; g_usar_con_base[0] = '\0';
+    g_dar_mode = 0; g_dar_inv[0] = '\0'; g_dar_base[0] = '\0';
+    if (g_pending.type == PEND_DAR) { g_pending.type = PEND_NONE; }
     g_pending_exit_id[0] = '\0';
     { int _vi;
       _strlcpy(g_action_text, "Walk", sizeof(g_action_text));
@@ -6962,10 +7520,10 @@ int engine_process_input(void) {
 
         /* Click en zona UI */
         if (g_mouse.y >= UI_Y) {
-            /* -- Boton de party (circulo entre flechas) -- */
+            /* -- Boton de party (action line izquierda) -- */
             if (g_party_count > 1 &&
-                g_mouse.x >= PARTY_BTN_X - 6 && g_mouse.x <= PARTY_BTN_X + 6 &&
-                g_mouse.y >= PARTY_BTN_Y - 6 && g_mouse.y <= PARTY_BTN_Y + 6) {
+                g_mouse.x >= 0 && g_mouse.x < PARTY_BTN_W &&
+                g_mouse.y >= UI_Y && g_mouse.y < UI_Y + ACTION_LINE_H) {
                 g_party_popup_open = !g_party_popup_open;
                 prev_buttons = g_mouse.buttons;
                 return 1;
@@ -7009,12 +7567,22 @@ int engine_process_input(void) {
                             }
                         } else if (g_selected_verb[0]) {
                             /* Verbo seleccionado + click en inventario */
-                            int _verb_approach=0; int _vi2;
+                            int _verb_approach=0; int _verb_is_give=0; int _vi2;
                             const char* _vlbl = g_selected_verb;
                             for(_vi2=0;_vi2<g_verb_count;_vi2++)
                                 if(_str_eq(g_verbs[_vi2].id,g_selected_verb))
-                                    {_verb_approach=g_verbs[_vi2].approach_obj; _vlbl=g_verbs[_vi2].label; break;}
-                            if (_verb_approach) {
+                                    {_verb_approach=g_verbs[_vi2].approach_obj; _verb_is_give=g_verbs[_vi2].is_give; _vlbl=g_verbs[_vi2].label; break;}
+                            if (_verb_is_give) {
+                                /* Verbo dar: entrar en modo dar esperando personaje */
+                                char _onk[52]; const char* _onm;
+                                snprintf(_onk,sizeof(_onk),"obj.%.39s.name",clicked_inv);
+                                _onm=engine_text(_onk); if(_onm==_onk)_onm=clicked_inv;
+                                snprintf(g_dar_base,sizeof(g_dar_base),"%s %s a",_vlbl,_onm);
+                                g_dar_mode=1;
+                                _strlcpy(g_dar_inv,  clicked_inv,       32);
+                                _strlcpy(g_dar_verb, g_selected_verb,   32);
+                                _strlcpy(g_action_text, g_dar_base, sizeof(g_action_text));
+                            } else if (_verb_approach) {
                                 /* Verbo "usar" (approach_obj=1): siempre entrar en modo usar_con */
                                 char _onk[52]; const char* _onm;
                                 snprintf(_onk,sizeof(_onk),"obj.%.39s.name",clicked_inv);
@@ -7027,18 +7595,14 @@ int engine_process_input(void) {
                             } else {
                                 /* Verbo no-usar: handler directo o respuesta texto */
                                 int _hi; int _found=0;
-                                for(_hi=0;_hi<g_verb_handler_count;_hi++) {
-                                    if(_str_eq(g_verb_handlers[_hi].verb_id,g_selected_verb)&&
-                                       _str_eq(g_verb_handlers[_hi].obj_id, clicked_inv)&&
-                                       g_verb_handlers[_hi].is_inv && g_verb_handlers[_hi].fn) {
-                                        g_verb_handlers[_hi].fn(); _reset_verb_action(); _found=1; break;
-                                    }
-                                }
+                                _hi = _find_verb_handler(g_selected_verb, clicked_inv, 1);
+                                if (_hi >= 0) { g_verb_handlers[_hi].fn(); _reset_verb_action(); _found=1; }
                                 if (!_found) {
                                     char _rk[96]; const char* _resp;
                                     snprintf(_rk,sizeof(_rk),"obj.%s.inv_verb.%s",clicked_inv,g_selected_verb);
                                     _resp=engine_text(_rk);
                                     if(_resp==_rk){snprintf(_rk,sizeof(_rk),"obj.%s.verb.%s",clicked_inv,g_selected_verb);_resp=engine_text(_rk);}
+                                    if(_resp==_rk&&g_verbset_id[0]){snprintf(_rk,sizeof(_rk),"verb.%s.%s.default",g_verbset_id,g_selected_verb);_resp=engine_text(_rk);}
                                     if(_resp!=_rk&&_resp&&_resp[0]){
                                         s16 ox=-1,oy=30;
                                         if(g_char_count>0){Char*_pr=&g_chars[g_protagonist];s16 tw=engine_text_width(VERB_FONT,_resp);ox=_pr->x-tw/2-(s16)g_cam_x;if(ox+tw>AG_SCREEN_W-2)ox=(s16)(AG_SCREEN_W-tw-2);if(ox<2)ox=2;oy=(s16)(_pr->y/2);if(oy<4)oy=4;}
@@ -7079,14 +7643,8 @@ int engine_process_input(void) {
                             if (_defverb[0]) {
                                 /* Buscar handler para verbo por defecto + inv */
                                 int _hi; int _found=0;
-                                for(_hi=0;_hi<g_verb_handler_count;_hi++) {
-                                    if(_str_eq(g_verb_handlers[_hi].verb_id,_defverb)&&
-                                       _str_eq(g_verb_handlers[_hi].obj_id,clicked_inv)&&
-                                       g_verb_handlers[_hi].is_inv&&g_verb_handlers[_hi].fn) {
-                                        g_verb_handlers[_hi].fn();
-                                        _found=1; break;
-                                    }
-                                }
+                                _hi = _find_verb_handler(_defverb, clicked_inv, 1);
+                                if (_hi >= 0) { g_verb_handlers[_hi].fn(); _found=1; }
                                 if (!_found) {
                                     /* Mostrar respuesta de texto */
                                     char _rk[96]; const char* _resp=NULL;
@@ -7140,6 +7698,8 @@ int engine_process_input(void) {
                     _strlcpy(g_selected_verb, g_verbs[_vi2].id, 32);
                     _strlcpy(g_action_text, g_verbs[_vi2].label, sizeof(g_action_text));
                     g_usar_con_mode = 0; g_usar_con_inv[0] = '\0';
+                    g_dar_mode = 0; g_dar_inv[0] = '\0'; g_dar_base[0] = '\0';
+                    if (g_pending.type == PEND_DAR) { g_pending.type = PEND_NONE; }
                     break;
                 }
               }
@@ -7198,6 +7758,39 @@ int engine_process_input(void) {
             _reset_verb_action();
             _usar_con_done:;
         } else
+        if (g_dar_mode && !g_script_running) {
+            /* Modo dar: caminar primero hacia el objetivo, luego despachar */
+            if (obj_char[0]) {
+                Char* _dtc = _find_char(obj_char);
+                if (_dtc && g_char_count > 0) {
+                    /* Registrar acción pendiente y caminar al objetivo */
+                    _strlcpy(g_pending.obj_id,  obj_char,   sizeof(g_pending.obj_id));
+                    _strlcpy(g_pending.verb_id, g_dar_verb, sizeof(g_pending.verb_id));
+                    g_pending.fn   = NULL;
+                    g_pending.type = PEND_DAR;
+                    /* Calcular posición de llegada: a distancia "brazo extendido" del objetivo.
+                     * Usamos el ancho de frame del protagonista como contacto visual correcto. */
+                    { Char* _gpr = &g_chars[g_protagonist];
+                      u16 _af = (_gpr->anims[_gpr->cur_anim].frames > 0) ? _gpr->anims[_gpr->cur_anim].frames : 1u;
+                      s16 _hw = (_gpr->dec_w > 0) ? (s16)(_gpr->dec_w / _af / 2) : 16;
+                      /* Añadir mitad del ancho del frame de dar: el brazo extendido llega al objetivo */
+                      { u16 _gaf = (_gpr->anims[ANIM_GIVE].frames > 0) ? _gpr->anims[ANIM_GIVE].frames : 1u;
+                        u16 _gfw = (_gpr->anims[ANIM_GIVE].fw > 0) ? _gpr->anims[ANIM_GIVE].fw :
+                                   (_gpr->dec_w > 0 ? (u16)(_gpr->dec_w / _gaf) : 32u);
+                        _hw = (s16)(_hw + _gfw / 2);
+                      }
+                      s16 _wx = (_dtc->x >= _gpr->x) ? (s16)(_dtc->x - _hw) : (s16)(_dtc->x + _hw);
+                      engine_walk_char(_gpr->id, _wx, _dtc->y, 0);
+                    }
+                }
+                /* dar_mode permanece activo hasta que PEND_DAR se despache */
+            } else {
+                /* Click en objeto o vacío: cancelar dar */
+                g_dar_mode=0; g_dar_inv[0]='\0'; g_dar_base[0]='\0';
+                g_pending.type = PEND_NONE;
+                _reset_verb_action();
+            }
+        } else
         if (obj[0] && !g_script_running) {
             /* Determinar verbo efectivo (seleccionado o movimiento por defecto) */
             { int _vai;
@@ -7224,17 +7817,12 @@ int engine_process_input(void) {
                     }
                     { int _hi2;
                       DBG("approach: buscando handler verb='%s' obj='%s' en %d handlers\n", g_selected_verb, obj, g_verb_handler_count);
-                      for (_hi2=0;_hi2<g_verb_handler_count;_hi2++) {
-                          DBG("  handler[%d] verb='%s' obj='%s' fn=%p\n", _hi2, g_verb_handlers[_hi2].verb_id, g_verb_handlers[_hi2].obj_id, (void*)g_verb_handlers[_hi2].fn);
-                          if (_str_eq(g_verb_handlers[_hi2].verb_id, g_selected_verb) &&
-                              _str_eq(g_verb_handlers[_hi2].obj_id,  obj) &&
-                              g_verb_handlers[_hi2].fn != NULL) {
-                              g_pending.type = PEND_HANDLER;
-                              g_pending.fn   = g_verb_handlers[_hi2].fn;
-                              _is_pv = 0;
-                              DBG("  -> PEND_HANDLER encontrado\n");
-                              break;
-                          }
+                      _hi2 = _find_verb_handler(g_selected_verb, obj, 0);
+                      if (_hi2 >= 0) {
+                          g_pending.type = PEND_HANDLER;
+                          g_pending.fn   = g_verb_handlers[_hi2].fn;
+                          _is_pv = 0;
+                          DBG("  -> PEND_HANDLER encontrado\n");
                       }
                     }
                     if (_is_pv) {
@@ -7244,19 +7832,16 @@ int engine_process_input(void) {
                           else g_pending.type = PEND_RESP;
                         }
                     } else if (g_pending.type == PEND_NONE) {
-                        for (_hi=0;_hi<g_verb_handler_count;_hi++) {
-                            if (_str_eq(g_verb_handlers[_hi].verb_id, g_selected_verb) &&
-                                _str_eq(g_verb_handlers[_hi].obj_id,  obj)) {
-                                /* sentinel fn=NULL: solo coger si el objeto es pickable */
-                                if (g_verb_handlers[_hi].fn == NULL) {
-                                    Obj* _pvo2 = _find_obj(obj);
-                                    g_pending.type = (_pvo2 && _pvo2->pickable) ? PEND_PICKUP : PEND_RESP;
-                                } else {
-                                    g_pending.type = PEND_HANDLER;
-                                    g_pending.fn   = g_verb_handlers[_hi].fn;
-                                }
-                                break;
-                            }
+                        { int _hf = _find_verb_handler(g_selected_verb, obj, 0);
+                          if (_hf >= 0) {
+                              if (g_verb_handlers[_hf].fn == NULL) {
+                                  Obj* _pvo2 = _find_obj(obj);
+                                  g_pending.type = (_pvo2 && _pvo2->pickable) ? PEND_PICKUP : PEND_RESP;
+                              } else {
+                                  g_pending.type = PEND_HANDLER;
+                                  g_pending.fn   = g_verb_handlers[_hf].fn;
+                              }
+                          }
                         }
                         if (g_pending.type == PEND_NONE && g_selected_verb[0])
                             g_pending.type = PEND_RESP;
@@ -7348,15 +7933,10 @@ int engine_process_input(void) {
                               { _is_pv2 = 1; break; }
                     }
                     /* Handler manual tiene prioridad sobre auto-pickup */
-                    { int _hi2;
-                      for (_hi2=0;_hi2<g_verb_handler_count;_hi2++) {
-                          if (_str_eq(g_verb_handlers[_hi2].verb_id, g_selected_verb) &&
-                              _str_eq(g_verb_handlers[_hi2].obj_id,  obj) &&
-                              g_verb_handlers[_hi2].fn != NULL) {
-                              g_verb_handlers[_hi2].fn();
-                              _executed = 1; _is_pv2 = 0;
-                              break;
-                          }
+                    { int _hi2 = _find_verb_handler(g_selected_verb, obj, 0);
+                      if (_hi2 >= 0 && g_verb_handlers[_hi2].fn != NULL) {
+                          g_verb_handlers[_hi2].fn();
+                          _executed = 1; _is_pv2 = 0;
                       }
                     }
                     if (_is_pv2 && !_executed) {
@@ -7367,28 +7947,25 @@ int engine_process_input(void) {
                             _executed = 1;
                         }
                     } else if (!_executed) {
-                        for (_hi=0;_hi<g_verb_handler_count;_hi++) {
-                            if (_str_eq(g_verb_handlers[_hi].verb_id, g_selected_verb) &&
-                                _str_eq(g_verb_handlers[_hi].obj_id,  obj)) {
-                                DBG("  handler match (no approach): verb='%s' obj='%s'\n", g_selected_verb, obj);
-                                if (g_verb_handlers[_hi].fn == NULL) {
-                                    Obj* _po = _find_obj(obj);
-                                    if (_po && _po->pickable) {
-                                        _po->visible = 0;
-                                        engine_give_object(obj, g_char_count>0 ? g_chars[g_protagonist].id : "");
-                                    }
-                                } else {
-                                    void (*_fn)(void) = g_verb_handlers[_hi].fn;
-                                    g_selected_verb[0] = '\0';
-                                    do { _mouse_poll(); } while (g_mouse.buttons);
-                                    g_script_running = 1;
-                                    _fn();
-                                    do { _mouse_poll(); } while (g_mouse.buttons);
-                                    g_script_running = 0;
+                        int _hf = _find_verb_handler(g_selected_verb, obj, 0);
+                        if (_hf >= 0) {
+                            DBG("  handler match (no approach): verb='%s' obj='%s'\n", g_selected_verb, obj);
+                            if (g_verb_handlers[_hf].fn == NULL) {
+                                Obj* _po = _find_obj(obj);
+                                if (_po && _po->pickable) {
+                                    _po->visible = 0;
+                                    engine_give_object(obj, g_char_count>0 ? g_chars[g_protagonist].id : "");
                                 }
-                                _executed = 1;
-                                break;
+                            } else {
+                                void (*_fn)(void) = g_verb_handlers[_hf].fn;
+                                g_selected_verb[0] = '\0';
+                                do { _mouse_poll(); } while (g_mouse.buttons);
+                                g_script_running = 1;
+                                _fn();
+                                do { _mouse_poll(); } while (g_mouse.buttons);
+                                g_script_running = 0;
                             }
+                            _executed = 1;
                         }
                     }
                   }
@@ -7454,17 +8031,12 @@ int engine_process_input(void) {
                 }
                 /* Registrar pending */
                 g_pending.type = PEND_NONE; g_pending.fn = NULL;
-                { int _chi;
-                  for (_chi = 0; _chi < g_verb_handler_count; _chi++) {
-                      if (_str_eq(g_verb_handlers[_chi].verb_id, g_selected_verb) &&
-                          _str_eq(g_verb_handlers[_chi].obj_id,  obj_char) &&
-                          !g_verb_handlers[_chi].is_inv && g_verb_handlers[_chi].fn) {
-                          g_pending.type = PEND_HANDLER;
-                          g_pending.fn   = g_verb_handlers[_chi].fn;
-                          _strlcpy(g_pending.obj_id,  obj_char,        sizeof(g_pending.obj_id));
-                          _strlcpy(g_pending.verb_id, g_selected_verb, sizeof(g_pending.verb_id));
-                          break;
-                      }
+                { int _chi = _find_verb_handler(g_selected_verb, obj_char, 0);
+                  if (_chi >= 0 && g_verb_handlers[_chi].fn) {
+                      g_pending.type = PEND_HANDLER;
+                      g_pending.fn   = g_verb_handlers[_chi].fn;
+                      _strlcpy(g_pending.obj_id,  obj_char,        sizeof(g_pending.obj_id));
+                      _strlcpy(g_pending.verb_id, g_selected_verb, sizeof(g_pending.verb_id));
                   }
                   if (g_pending.type == PEND_NONE && g_selected_verb[0]) {
                       /* Sin handler registrado: respuesta de texto al llegar */
@@ -7664,6 +8236,17 @@ int engine_process_input(void) {
                   c->pcx_buf = (u8*)engine_dat_load_gfx(c->anims[idle_role].id, &sz2);
                   c->pcx_size = sz2;
                   _strlcpy(c->pcx_loaded, c->anims[idle_role].id, 32);
+                  if (c->pcx_buf) {
+                      u16 _dw2=0,_dh2=0;
+                      _pcx_decode(c->pcx_buf,sz2,g_pcx_decode_buf,&_dw2,&_dh2,0);
+                      if (_dw2>0&&_dh2>0) {
+                          c->dec_w=_dw2; c->dec_h=_dh2;
+                          if ((u32)_dw2*_dh2<=(u32)AG_SCREEN_PIXELS) {
+                              c->dec_buf=(u8*)malloc((u32)_dw2*_dh2);
+                              if(c->dec_buf) memcpy(c->dec_buf,g_pcx_decode_buf,(u32)_dw2*_dh2);
+                          }
+                      }
+                  }
               }
             }
             /* Ejecutar acción pendiente si este personaje es el protagonista */
@@ -7742,6 +8325,12 @@ int engine_process_input(void) {
                             _resp = engine_text(_rk);
                             if (_resp == _rk) _resp = NULL;
                         }
+                        if (!_resp && g_verbset_id[0] && g_pending.verb_id[0]) {
+                            snprintf(_rk, sizeof(_rk), "verb.%s.%s.default",
+                                     g_verbset_id, g_pending.verb_id);
+                            _resp = engine_text(_rk);
+                            if (_resp == _rk) _resp = NULL;
+                        }
                     }
                     if (_resp && _resp[0]) {
                         /* Mostrar sobre el protagonista como globo de diálogo */
@@ -7756,6 +8345,58 @@ int engine_process_input(void) {
                         _protagonist_talk_start(2000);
                         _overlay_add(_resp, 15, ox, oy, g_ticks_ms + 2000, 0);
                     }
+                    break;
+                }
+                case PEND_DAR: {
+                    /* Ejecutar dar al llegar junto al objetivo */
+                    const char* _tgt = g_pending.obj_id;
+                    g_pending.type = PEND_NONE;
+                    /* Encarar al objetivo */
+                    { Char* _dtgt = _find_char(_tgt);
+                      if (_dtgt && g_char_count > 0) {
+                          Char* _dpr = &g_chars[g_protagonist];
+                          int _fdx = (int)(_dtgt->x - _dpr->x);
+                          int _fdy = (int)(_dtgt->y - _dpr->y);
+                          int _adx = _fdx<0 ? -_fdx : _fdx;
+                          int _ady = _fdy<0 ? -_fdy : _fdy;
+                          const char* _fdir = (_ady>_adx) ? ((_fdy<0)?"up":"down") : ((_fdx>=0)?"right":"left");
+                          engine_face_dir(g_chars[g_protagonist].id, _fdir);
+                      }
+                    }
+                    if (_party_find(_tgt) >= 0) {
+                        /* Miembro del party: cambiar char_owner */
+                        int _si;
+                        for (_si=0; _si<g_inv_count; _si++)
+                            if (_str_eq(g_inventory[_si].obj_id, g_dar_inv))
+                                { _strlcpy(g_inventory[_si].char_owner, _tgt, 32); break; }
+                        _protagonist_give_start();
+                    } else {
+                        /* NPC: buscar handler engine_on_verb_inv (con prioridad char-específico) */
+                        int _dhi; int _dfound=0;
+                        _dhi = _find_verb_handler(g_dar_verb, g_dar_inv, 1);
+                        if (_dhi >= 0 && g_verb_handlers[_dhi].fn) {
+                            _strlcpy(g_dar_target, _tgt, 32);
+                            do { _mouse_poll(); } while (g_mouse.buttons);
+                            g_script_running=1; g_verb_handlers[_dhi].fn(); g_script_running=0;
+                            do { _mouse_poll(); } while (g_mouse.buttons);
+                            _dfound=1;
+                        }
+                        if (!_dfound) {
+                            char _rk[96]; const char* _resp=NULL;
+                            if (g_verbset_id[0] && g_dar_verb[0]) {
+                                snprintf(_rk,sizeof(_rk),"verb.%s.%s.default",g_verbset_id,g_dar_verb);
+                                _resp=engine_text(_rk); if(_resp==_rk)_resp=NULL;
+                            }
+                            if (_resp && _resp[0]) {
+                                s16 ox=-1,oy=30;
+                                if(g_char_count>0){Char*_pr=&g_chars[g_protagonist];s16 tw=engine_text_width(VERB_FONT,_resp);ox=_text_ox((s16)(_pr->x-(s16)g_cam_x),tw);oy=(s16)(_pr->y/2);if(oy<4)oy=4;}
+                                _protagonist_talk_start(2000);
+                                _overlay_add(_resp,15,ox,oy,g_ticks_ms+2000,0);
+                            }
+                        }
+                    }
+                    g_dar_mode=0; g_dar_inv[0]='\0'; g_dar_base[0]='\0';
+                    _reset_verb_action();
                     break;
                 }
                 default: break;

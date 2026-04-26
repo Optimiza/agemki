@@ -20,7 +20,7 @@ const LAYER_LIST = [
 
 // ── Selector de MIDI ─────────────────────────────────────────────────────────
 
-function MidiPicker({ value, gameDir, onChange, loop, onLoopChange }) {
+function MidiPicker({ value, gameDir, onChange, loop, onLoopChange, cont, onContChange }) {
   const [files, setFiles] = useState(null)
   const [playing, setPlaying] = useState(false)
 
@@ -71,11 +71,19 @@ function MidiPicker({ value, gameDir, onChange, loop, onLoopChange }) {
           style={{ padding: '0 6px', fontSize: 12 }}>↻</button>
       </div>
       {value && (
-        <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, cursor: 'pointer', userSelect: 'none' }}>
-          <input type="checkbox" checked={loop !== false} style={{ margin: 0 }}
-            onChange={e => onLoopChange?.(e.target.checked)} />
-          Loop
-        </label>
+        <div style={{ display:'flex', gap:12 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, cursor: 'pointer', userSelect: 'none' }}>
+            <input type="checkbox" checked={loop !== false} style={{ margin: 0 }}
+              onChange={e => onLoopChange?.(e.target.checked)} />
+            Loop
+          </label>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 11, cursor: 'pointer', userSelect: 'none' }}
+            title="No reinicia la pista si ya está sonando (útil para closeups con la misma música)">
+            <input type="checkbox" checked={!!cont} style={{ margin: 0 }}
+              onChange={e => onContChange?.(e.target.checked)} />
+            Continuar si ya suena
+          </label>
+        </div>
       )}
       {empty && (
         <span style={{ fontSize: 10, color: 'var(--c-text-muted, #888)' }}>
@@ -770,6 +778,8 @@ export default function SceneSidePanel({ panelMode = 'all' }) {
             gameDir={gameDir}
             loop={room.audio?.loop !== false}
             onLoopChange={v => updateRoom({ audio: { ...room.audio, loop: v } })}
+            cont={!!room.audio?.midiCont}
+            onContChange={v => updateRoom({ audio: { ...room.audio, midiCont: v || null } })}
             onChange={v => updateRoom({ audio: { ...room.audio, midi: v || null } })} />
         </div>
       </Section>}

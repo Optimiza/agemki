@@ -12,6 +12,7 @@ void engine_audio_update(void);   /* llamar cada frame del game loop */
 void engine_play_midi(const char* midi_id);
 /* Reproduce MIDI con flag de bucle. loop=1: repetir al acabar; loop=0: una vez. */
 void engine_play_midi_loop(const char* midi_id, int loop);
+void engine_play_midi_cont(const char* midi_id, int loop);
 void engine_stop_midi(void);
 void engine_pause_midi(void);
 void engine_resume_midi(void);

@@ -168,7 +168,7 @@ export const useCharStore = create((set, get) => ({
     const id = `anim_${Date.now()}`
     const anim = { id, name: 'nueva_animacion', spriteFile: null, frameCount: 1, fps: 8, flipH: false, flipV: false }
     return {
-      activeChar: { ...s.activeChar, animations: [...s.activeChar.animations, anim] },
+      activeChar: { ...s.activeChar, animations: [anim, ...s.activeChar.animations] },
       dirty: true,
     }
   }),

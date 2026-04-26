@@ -457,6 +457,7 @@ const ANIM_ROLES = [
   { key: 'talk_left',  label: '💬← Hablar izquierda',  hint: 'Sprite explícito mirando izquierda. Si vacío, se usa espejo de talk.' },
   { key: 'talk_up',    label: '💬↑ Hablar arriba',      hint: 'Animación de boca al hablar mirando arriba. null = usa talk lateral si existe' },
   { key: 'talk_down',  label: '💬↓ Hablar abajo',       hint: 'Animación de boca al hablar mirando abajo. null = usa talk lateral si existe' },
+  { key: 'give',       label: '🤝 Dar objeto',           hint: 'Animación al dar un objeto a otro personaje. null = usa talk si existe, sino idle' },
 ]
 
 function AnimRolesPanel({ char }) {
@@ -521,12 +522,19 @@ function AnimRolesPanel({ char }) {
 // ── Panel de animaciones ──────────────────────────────────────────────────────
 function AnimationsPanel({ char, gameDir, palette }) {
   const { addAnimation, updateAnimation, deleteAnimation, moveAnimation } = useCharStore()
+  const listRef = useRef(null)
+
+  function handleAddAnimation() {
+    addAnimation()
+    // La nueva animación se inserta al principio — scroll al top
+    if (listRef.current) listRef.current.scrollTop = 0
+  }
 
   return (
     <div className="anim-panel">
       <div className="anim-panel__header">
         <span>Animaciones <span className="char-count">{char.animations?.length || 0}</span></span>
-        <button className="btn-primary" onClick={addAnimation}>＋ Añadir</button>
+        <button className="btn-primary" onClick={handleAddAnimation}>＋ Añadir</button>
       </div>
 
       {(!char.animations || char.animations.length === 0) && (
@@ -536,7 +544,7 @@ function AnimationsPanel({ char, gameDir, palette }) {
         </div>
       )}
 
-      <div className="anim-list">
+      <div className="anim-list" ref={listRef}>
         {char.animations?.map((anim, idx) => (
           <div key={anim.id} className="anim-row">
             <div className="anim-row__order">

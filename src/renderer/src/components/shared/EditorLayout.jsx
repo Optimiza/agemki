@@ -206,6 +206,8 @@ export default function EditorLayout({ children, secondary }) {
     <div className="editor-layout">
       <header className="editor-toolbar">
         <div className="editor-toolbar__left">
+          <PlayButton gameDir={activeGame?.gameDir} />
+
           <button
             className="btn-ghost editor-toolbar__home"
             onClick={closeGame}
@@ -239,7 +241,6 @@ export default function EditorLayout({ children, secondary }) {
           >
             ⊟
           </button>
-          <PlayButton gameDir={activeGame?.gameDir} />
           <button
             className="btn-ghost editor-help-btn"
             onClick={() => window.api.openHelp?.()}

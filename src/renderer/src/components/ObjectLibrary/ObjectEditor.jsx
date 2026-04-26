@@ -329,6 +329,7 @@ function VerbResponseBlock({ obj, gameVerbs, langs, locales, onSetLocale, active
   const { setVerbResponse, setInvVerbResponse } = useObjectStore()
   const setter = mode === 'inv' ? setInvVerbResponse : setVerbResponse
   const responses = mode === 'inv' ? (obj.invVerbResponses || []) : (obj.verbResponses || [])
+  const [expandedChar, setExpandedChar] = useState({})  // verbId -> bool
 
   // Roles disponibles del protagonista (solo los que tienen asignación)
   const protagonist = (chars || []).find(c => c.isProtagonist)
@@ -338,6 +339,31 @@ function VerbResponseBlock({ obj, gameVerbs, langs, locales, onSetLocale, active
 
   function getResp(verbId) {
     return responses.find(r => r.verbId === verbId) || { verbId, mode: 'text', scriptId: '' }
+  }
+
+  function setCharResp(verbId, charId, partial) {
+    const resp = getResp(verbId)
+    const existing = (resp.charResponses || []).find(cr => cr.charId === charId)
+    let charResponses
+    if (existing) {
+      charResponses = resp.charResponses.map(cr => cr.charId === charId ? { ...cr, ...partial } : cr)
+    } else {
+      charResponses = [...(resp.charResponses || []), { charId, mode: 'text', scriptId: '', ...partial }]
+    }
+    setter(verbId, { charResponses })
+  }
+
+  function removeCharResp(verbId, charId) {
+    const resp = getResp(verbId)
+    setter(verbId, { charResponses: (resp.charResponses || []).filter(cr => cr.charId !== charId) })
+  }
+
+  function addCharResp(verbId) {
+    const usedIds = (getResp(verbId).charResponses || []).map(cr => cr.charId)
+    const free = (chars || []).find(c => !usedIds.includes(c.id))
+    if (!free) return
+    setCharResp(verbId, free.id, {})
+    setExpandedChar(prev => ({ ...prev, [verbId]: true }))
   }
 
   if (!gameVerbs || gameVerbs.length === 0) {
@@ -389,20 +415,117 @@ function VerbResponseBlock({ obj, gameVerbs, langs, locales, onSetLocale, active
                 </select>
               ) : (
                 <div className="verb-response-row__text-group">
-                  <input type="text"
-                    value={loc[textKey] || ''}
-                    onChange={e => onSetLocale(activeLang, textKey, e.target.value)}
-                    placeholder={`Respuesta en ${activeLang}…`} />
-                  {availableRoles.length > 0 && (
-                    <select className="verb-response-row__anim"
-                      title="Animación al hablar"
-                      value={resp.sayAnim || ''}
-                      onChange={e => setter(verb.id, { sayAnim: e.target.value || undefined })}>
-                      <option value="">↕ Hablar por posición</option>
-                      {availableRoles.map(opt => (
-                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                      ))}
-                    </select>
+                  {/* Línea principal */}
+                  <div style={{ display:'flex', gap:4, alignItems:'center' }}>
+                    <input type="text"
+                      value={loc[textKey] || ''}
+                      onChange={e => onSetLocale(activeLang, textKey, e.target.value)}
+                      placeholder={`Respuesta en ${activeLang}…`} />
+                    {availableRoles.length > 0 && (
+                      <select className="verb-response-row__anim"
+                        title="Animación al hablar"
+                        value={resp.sayAnim || ''}
+                        onChange={e => setter(verb.id, { sayAnim: e.target.value || undefined })}>
+                        <option value="">↕ pos</option>
+                        {availableRoles.map(opt => (
+                          <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                      </select>
+                    )}
+                    <button title="Añadir línea" style={{ padding:'0 5px', fontSize:13, lineHeight:1 }}
+                      onClick={() => setter(verb.id, { extraLines: [...(resp.extraLines||[]), { sayAnim:'' }] })}>
+                      +
+                    </button>
+                  </div>
+                  {/* Líneas extra encadenadas */}
+                  {(resp.extraLines || []).map((el, ei) => {
+                    const ekKey = textKey + '.e' + ei
+                    return (
+                      <div key={ei} style={{ display:'flex', gap:4, alignItems:'center', marginTop:3 }}>
+                        <span style={{ fontSize:10, opacity:.5, flexShrink:0 }}>↳</span>
+                        <input type="text"
+                          value={loc[ekKey] || ''}
+                          onChange={e => onSetLocale(activeLang, ekKey, e.target.value)}
+                          placeholder={`Línea ${ei+2} en ${activeLang}…`} />
+                        {availableRoles.length > 0 && (
+                          <select className="verb-response-row__anim"
+                            title="Animación al hablar"
+                            value={el.sayAnim || ''}
+                            onChange={e => {
+                              const nxt = (resp.extraLines||[]).map((x,i) => i===ei ? {...x, sayAnim: e.target.value||''} : x)
+                              setter(verb.id, { extraLines: nxt })
+                            }}>
+                            <option value="">↕ pos</option>
+                            {availableRoles.map(opt => (
+                              <option key={opt.value} value={opt.value}>{opt.label}</option>
+                            ))}
+                          </select>
+                        )}
+                        <button title="Eliminar línea" style={{ padding:'0 5px', fontSize:11, opacity:.6 }}
+                          onClick={() => setter(verb.id, { extraLines: (resp.extraLines||[]).filter((_,i) => i!==ei) })}>
+                          ×
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+              {/* Respuestas por personaje */}
+              {(chars || []).length > 0 && (
+                <div style={{ marginTop:4, borderTop:'1px solid rgba(255,255,255,0.06)', paddingTop:4 }}>
+                  <button style={{ fontSize:10, opacity:.6, padding:'1px 6px', cursor:'pointer' }}
+                    onClick={() => setExpandedChar(prev => ({ ...prev, [verb.id]: !prev[verb.id] }))}>
+                    {expandedChar[verb.id] ? '▾' : '▸'} Por personaje ({(resp.charResponses||[]).length})
+                  </button>
+                  {expandedChar[verb.id] && (
+                    <div style={{ paddingLeft:8, marginTop:4, display:'flex', flexDirection:'column', gap:4 }}>
+                      {(resp.charResponses || []).map(cr => {
+                        const crTextKey = textKey + '.' + cr.charId
+                        return (
+                          <div key={cr.charId} style={{ display:'flex', gap:4, alignItems:'center', flexWrap:'wrap', padding:'4px', background:'rgba(255,255,255,0.04)', borderRadius:4 }}>
+                            <select style={{ fontSize:11, flex:'0 0 auto' }}
+                              value={cr.charId}
+                              onChange={e => {
+                                removeCharResp(verb.id, cr.charId)
+                                setCharResp(verb.id, e.target.value, { mode: cr.mode, scriptId: cr.scriptId })
+                              }}>
+                              {(chars || []).map(c => <option key={c.id} value={c.id}>{c.name || c.id}</option>)}
+                            </select>
+                            <label style={{ fontSize:10 }}>
+                              <input type="radio" name={`cr_mode_${mode}_${obj.id}_${verb.id}_${cr.charId}`}
+                                value="text" checked={cr.mode !== 'script'}
+                                onChange={() => setCharResp(verb.id, cr.charId, { mode: 'text' })} />
+                              Texto
+                            </label>
+                            <label style={{ fontSize:10 }}>
+                              <input type="radio" name={`cr_mode_${mode}_${obj.id}_${verb.id}_${cr.charId}`}
+                                value="script" checked={cr.mode === 'script'}
+                                onChange={() => setCharResp(verb.id, cr.charId, { mode: 'script' })} />
+                              Script
+                            </label>
+                            {cr.mode === 'script' ? (
+                              <select style={{ flex:1, fontSize:11 }}
+                                value={cr.scriptId || ''}
+                                onChange={e => setCharResp(verb.id, cr.charId, { mode: 'script', scriptId: e.target.value })}>
+                                <option value="">— script —</option>
+                                {scripts.map(s => <option key={s.id} value={s.id}>{s.name || s.id}</option>)}
+                              </select>
+                            ) : (
+                              <input type="text" style={{ flex:1, fontSize:11 }}
+                                value={loc[crTextKey] || ''}
+                                onChange={e => onSetLocale(activeLang, crTextKey, e.target.value)}
+                                placeholder={`Respuesta para ${cr.charId}…`} />
+                            )}
+                            <button title="Eliminar" style={{ fontSize:10, padding:'0 4px' }}
+                              onClick={() => removeCharResp(verb.id, cr.charId)}>✕</button>
+                          </div>
+                        )
+                      })}
+                      {(resp.charResponses||[]).length < (chars||[]).length && (
+                        <button style={{ fontSize:10, alignSelf:'flex-start', padding:'2px 8px' }}
+                          onClick={() => addCharResp(verb.id)}>+ Añadir personaje</button>
+                      )}
+                    </div>
                   )}
                 </div>
               )}

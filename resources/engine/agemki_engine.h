@@ -80,6 +80,7 @@ typedef struct {
     const char* text_key;     /* localeKey para la opción */
     const char* condition;    /* condición como string serializado, "" = siempre */
     const char* next_node_id; /* id del nodo siguiente, "" = fin */
+    const char* char_filter;  /* "" = visible a todos; id de personaje = solo para ese protagonista */
 } DialogueOption;
 
 #define MAX_DIALOGUE_LINES 4   /* líneas simultáneas por nodo */
@@ -89,6 +90,7 @@ typedef struct {
     const char* text_key;
     const char* animation;   /* animación del actor al hablar, "" = ninguna */
     const char* direction;   /* orientación del actor, "" = sin cambio */
+    const char* char_filter; /* "" = visible a todos; id de personaje = solo para ese protagonista */
 } DialogueLine;
 
 typedef struct {
@@ -255,6 +257,11 @@ void engine_clear_text(void);
 
 /* Cambia a otra room entrando por entry_id. Libera recursos de la room actual. */
 void engine_change_room(const char* room_id, const char* entry_id);
+/* Entra en una room de primer plano (closeup): guarda room anterior, suprime reinyección del protagonista.
+ * show_ui: 1 = mantener UI de verbos (puzzles/tienda), 0 = ocultarla (diálogos/cutscenes). */
+void engine_enter_closeup(const char* room_id, int show_ui);
+/* Sale del closeup y regresa a la room guardada por engine_enter_closeup. */
+void engine_exit_closeup(void);
 
 /* Registra un entry point en la room actual (llamado desde room_*() generado). */
 void engine_register_entry(const char* id, s16 x, s16 y);
@@ -331,6 +338,7 @@ void engine_set_char_talk_anim(const char* char_id, const char* pcx, int frames,
 void engine_set_char_talk_anim_left(const char* char_id, const char* pcx, int frames, int fps, int fw);
 void engine_set_char_talk_anim_up(const char* char_id, const char* pcx, int frames, int fps, int fw);
 void engine_set_char_talk_anim_down(const char* char_id, const char* pcx, int frames, int fps, int fw);
+void engine_set_char_give_anim(const char* char_id, const char* pcx, int frames, int fps, int fw);
 
 /* Reproduce una animaci?n una vez y vuelve a la anterior. */
 void engine_play_anim(const char* char_id, const char* anim_name);
@@ -358,7 +366,13 @@ void engine_switch_protagonist(const char* char_id);
 /* Devuelve 1 si el personaje esta en la room actual. */
 int  engine_char_in_room(const char* char_id);
 /* Configura los colores del popup selector de protagonistas (indices paleta VGA). */
+void engine_set_party_btn_sprite(const char* pcx_id, const char* pcx_hover_id);
+/* Colores del menú de juego (barra de verbos + inventario). */
+void engine_set_ui_colors(u8 bg, u8 action, u8 sel, u8 inv_hov);
+/* Colores del menú de pausa (ESC): fondo, botón normal, botón hover, borde, texto, item activo. */
+void engine_set_menu_colors(u8 bg, u8 btn, u8 sel, u8 brd, u8 txt, u8 act);
 void engine_set_party_popup_colors(u8 bg, u8 border, u8 active, u8 hover);
+void engine_set_dialogue_colors(u8 bg, u8 brd, u8 txt, u8 sel);
 
 /* ?? Objetos ??????????????????????????????????????????????????????????????? */
 
@@ -446,14 +460,27 @@ void engine_set_verbset(const char* verbset_id);
 /* Registra un handler para verbo+objeto. */
 void engine_on_verb_object(const char* verb_id, const char* obj_id,
                            void (*handler)(void));
+/* Variante con filtro de protagonista: solo se activa si char_id es el protagonista activo. */
+void engine_on_verb_object_char(const char* verb_id, const char* obj_id,
+                                const char* char_id, void (*handler)(void));
 
 /* Registra un handler para clic simple en objeto. */
 void engine_on_verb_inv(const char* verb_id, const char* inv_obj_id,
                         void (*handler)(void));
+/* Variante con filtro de protagonista. */
+void engine_on_verb_inv_char(const char* verb_id, const char* inv_obj_id,
+                             const char* char_id, void (*handler)(void));
 /* require_both_inv=1: el script solo ejecuta si el target tambien esta en inv. */
 void engine_on_usar_con(const char* inv_obj_id, const char* target_id,
                         void (*handler)(void), int require_both_inv);
+/* Variante con filtro de protagonista. */
+void engine_on_usar_con_char(const char* inv_obj_id, const char* target_id,
+                             const char* char_id, void (*handler)(void), int require_both_inv);
 void engine_on_object_click(const char* obj_id, void (*handler)(void));
+/* Devuelve el id del personaje objetivo del último verbo dar ejecutado. */
+const char* engine_get_dar_target(void);
+/* Marca un verbo del verbset activo como verbo "dar" (seleccionar inv → esperar personaje). */
+void engine_set_give_verb(const char* verb_id);
 
 /* Registra el script de inicio de partida. */
 void engine_on_game_start(void (*handler)(void));

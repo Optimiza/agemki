@@ -370,6 +370,85 @@ export default function GameParams() {
           </div>
         </section>
 
+        {/* ── 7. Diálogos — colores del panel de opciones ─────────────────── */}
+        <section className="gp-section">
+          <div className="gp-section__title">💬 Diálogos — colores del panel de opciones</div>
+          <p className="gp-hint">
+            Colores por defecto del panel de elección de diálogo. Cada diálogo puede sobreescribirlos individualmente desde el editor de diálogos.
+          </p>
+          <div className="gp-party-colors">
+            {[
+              { key: 'colorBg',  label: 'Fondo panel',  def: 16 },
+              { key: 'colorBrd', label: 'Borde panel',  def: 0  },
+              { key: 'colorTxt', label: 'Texto normal', def: 15 },
+              { key: 'colorSel', label: 'Fila hover',   def: 26 },
+            ].map(({ key, label, def }) => (
+              <div key={key} className="gp-party-color-row">
+                <span className="gp-party-color-label">{label}</span>
+                <PalettePicker
+                  palette={palette}
+                  value={params.dialogueColors?.[key] ?? def}
+                  onChange={v => up({ dialogueColors: { ...(params.dialogueColors || {}), [key]: v } })}
+                />
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* ── 8. Menú de juego — colores de la barra de verbos ───────────── */}
+        <section className="gp-section">
+          <div className="gp-section__title">🎮 Menú de juego — colores de la barra de verbos</div>
+          <p className="gp-hint">
+            Colores de la banda UI inferior (verbos, línea de acción, inventario).
+            Índices de paleta VGA (0–255). El índice 1 es negro, 8 gris oscuro, 14 amarillo, 15 blanco.
+          </p>
+          <div className="gp-party-colors">
+            {[
+              { key: 'colorBg',     label: 'Fondo UI',              def: 1  },
+              { key: 'colorAction', label: 'Texto línea de acción', def: 15 },
+              { key: 'colorSel',    label: 'Verbo seleccionado',    def: 14 },
+              { key: 'colorInvHov', label: 'Inv. hover/selección',  def: 8  },
+            ].map(({ key, label, def }) => (
+              <div key={key} className="gp-party-color-row">
+                <span className="gp-party-color-label">{label}</span>
+                <PalettePicker
+                  palette={palette}
+                  value={params.uiColors?.[key] ?? def}
+                  onChange={v => up({ uiColors: { ...(params.uiColors || {}), [key]: v } })}
+                />
+              </div>
+            ))}
+          </div>
+        </section>
+
+        {/* ── 9. Menú ESC — colores del menú de pausa ────────────────────── */}
+        <section className="gp-section">
+          <div className="gp-section__title">⏸ Menú ESC — colores del menú de pausa</div>
+          <p className="gp-hint">
+            Colores del menú que aparece al pulsar ESC durante el juego (Continuar, Guardar, Configuración, Salir).
+            Índices de paleta VGA (0–255). Por defecto usa azul oscuro (16), gris medio (20) y cyan (26).
+          </p>
+          <div className="gp-party-colors">
+            {[
+              { key: 'colorBg',  label: 'Fondo / overlay dithered', def: 16 },
+              { key: 'colorBtn', label: 'Botón normal',             def: 20 },
+              { key: 'colorSel', label: 'Botón hover / selección',  def: 26 },
+              { key: 'colorBrd', label: 'Borde de panel y botones', def: 0  },
+              { key: 'colorTxt', label: 'Texto de botones',         def: 15 },
+              { key: 'colorAct', label: 'Ítem activo (resaltado)',  def: 12 },
+            ].map(({ key, label, def }) => (
+              <div key={key} className="gp-party-color-row">
+                <span className="gp-party-color-label">{label}</span>
+                <PalettePicker
+                  palette={palette}
+                  value={params.menuColors?.[key] ?? def}
+                  onChange={v => up({ menuColors: { ...(params.menuColors || {}), [key]: v } })}
+                />
+              </div>
+            ))}
+          </div>
+        </section>
+
         {/* ── JSON preview ────────────────────────────────────────────────── */}
         <section className="gp-section gp-section--code">
           <div className="gp-section__title">📄 Campos en game.json</div>
@@ -378,6 +457,9 @@ export default function GameParams() {
             activeVerbSet:    params.activeVerbSet || null,
             walkmapCellSize:  params.walkmapCellSize || 8,
             partyPopup:       params.partyPopup || null,
+            dialogueColors:   params.dialogueColors || null,
+            uiColors:         params.uiColors || null,
+            menuColors:       params.menuColors || null,
           }, null, 2)}</pre>
         </section>
 

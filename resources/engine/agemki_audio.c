@@ -22,6 +22,8 @@ static FILE*    g_log        = NULL;
 /* Preferencia de driver convertida a constante MDRV_HW_*.
  * Se establece con engine_audio_set_pref() antes de engine_audio_init(). */
 static int      g_audio_pref = MDRV_HW_NONE;
+/* ID del MIDI actualmente en reproduccion (para engine_play_midi_cont) */
+static char     g_cur_midi_id[36] = "";
 
 /* ------------------------------------------------------------------ */
 /* SFX — Sound Blaster PCM                                             */
@@ -221,6 +223,7 @@ void engine_play_midi_loop(const char* midi_id, int loop) {
     if (!g_audio_ok) { _alog("  SKIP: audio_ok=0"); return; }
 
     engine_stop_midi();
+    { int _i = 0; while (midi_id[_i] && _i < 35) { g_cur_midi_id[_i] = midi_id[_i]; _i++; } g_cur_midi_id[_i] = '\0'; }
 
     buf = engine_dat_load_audio(midi_id, &sz);
     if (!buf) {
@@ -252,8 +255,24 @@ void engine_play_midi_loop(const char* midi_id, int loop) {
 
 void engine_stop_midi(void) {
     _alog("engine_stop_midi");
+    g_cur_midi_id[0] = '\0';
     if (!g_audio_ok) return;
     mdrv_stop();
+}
+
+/* Reproduce midi_id solo si no es el que ya está sonando. Util para rooms
+ * compartidas que no deben reiniciar la música al entrar. */
+void engine_play_midi_cont(const char* midi_id, int loop) {
+    int _eq = 1; int _i = 0;
+    while (midi_id[_i] || g_cur_midi_id[_i]) {
+        if (midi_id[_i] != g_cur_midi_id[_i]) { _eq = 0; break; }
+        _i++;
+    }
+    if (_eq && mdrv_state() == 1) {
+        _alogf("engine_play_midi_cont: '%s' ya suena, continuar", midi_id, 0);
+        return;
+    }
+    engine_play_midi_loop(midi_id, loop);
 }
 
 void engine_pause_midi(void) {
