@@ -178,6 +178,7 @@ void engine_free(void* ptr);
 
 /* Carga y muestra el PCX de fondo de la room actual. */
 void engine_load_bg(const char* gfx_id);
+void engine_set_room_no_save(int v);  /* 1 = deshabilitar guardado en esta sala */
 /* Carga PCX 320x200 como fondo a pantalla completa. Activa modo fullscreen: sin UI, sin hover. */
 void engine_load_bg_fullscreen(const char* gfx_id);
 /* Desactiva modo fullscreen y restaura UI normal. */

@@ -772,6 +772,15 @@ export default function SceneSidePanel({ panelMode = 'all' }) {
           <div className="prop-hint">Sin UI de verbos ni inventario. Usa engine_exit_fullscreen() para volver al modo normal.</div>
         )}
 
+        <div className="prop-row prop-row--check">
+          <label>Bloquear guardado en esta sala</label>
+          <input type="checkbox" checked={room.noSave || false}
+            onChange={e => updateRoom({ noSave: e.target.checked })} />
+        </div>
+        {room.noSave && (
+          <div className="prop-hint">El menú ESC no permitirá guardar mientras el jugador esté en esta sala.</div>
+        )}
+
         <div className="prop-row">
           <label>🎵 MIDI</label>
           <MidiPicker value={room.audio?.midi || ''}

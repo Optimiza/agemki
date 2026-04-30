@@ -3441,6 +3441,7 @@ async function generateMainC(gameDir, audioDriver) {
     } else {
       e(`    engine_load_bg("${bgName}");`)
     }
+    if (room.noSave) e(`    engine_set_room_no_save(1);`)
 
     // Scroll por mitades (tipo Scumm Bar): PCX de 2×320px, pan manual sin camera-follow
     if (room.scroll?.halves) {
@@ -3892,22 +3893,6 @@ async function generateMainC(gameDir, audioDriver) {
       e('')
     }
   }
-  // Inventario inicial — después de engine_register_obj_inv_gfx para que los iconos estén registrados
-  {
-    const hasAny = charIds.some(id => chars[id]?.inventory?.length > 0)
-    if (hasAny) {
-      e(`    /* Inventario inicial de personajes */`)
-      for (const id of charIds) {
-        const ch = chars[id]
-        if (!ch?.inventory?.length) continue
-        for (const item of ch.inventory) {
-          if (item.objectId)
-            e(`    engine_give_object("${cStr(item.objectId)}", "${cStr(id)}");`)
-        }
-      }
-      e('')
-    }
-  }
   // Party de protagonistas — registrar todos los isProtagonist=true
   {
     const protagonists = charIds.filter(id => chars[id]?.isProtagonist)
@@ -3961,6 +3946,23 @@ async function generateMainC(gameDir, audioDriver) {
   }
   e(`    /* Bucle de partida: se repite si el jugador elige "Nueva partida" */`)
   e(`    do {`)
+  // Inventario inicial — dentro del bucle para que se restaure tras engine_reset_game()
+  // engine_give_object ignora duplicados, por lo que es seguro llamarlo en cada iteración
+  {
+    const hasAny = charIds.some(id => chars[id]?.inventory?.length > 0)
+    if (hasAny) {
+      e(`        /* Inventario inicial de personajes */`)
+      for (const id of charIds) {
+        const ch = chars[id]
+        if (!ch?.inventory?.length) continue
+        for (const item of ch.inventory) {
+          if (item.objectId)
+            e(`        engine_give_object("${cStr(item.objectId)}", "${cStr(id)}");`)
+        }
+      }
+      e(``)
+    }
+  }
   if (game.startSequence) {
     e(`        /* secuencia de inicio — controla todo el flujo incluyendo load_room */`)
     e(`        seq_${cId(game.startSequence)}();`)

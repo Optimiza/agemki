@@ -116,6 +116,7 @@ static u32 g_cam_pan_start_ms = 0;    /* ticks_ms cuando empezo el pan */
 static u8  g_cam_pan_dir      = 0;    /* 0 = izq→der, 1 = der→izq */
 static u8  g_scroll_recovering = 0;   /* 1 = personaje caminando a zona segura tras pan */
 static u8* g_vga = (u8*)0xA0000;              /* puntero directo a VRAM */
+static int g_loading_save = 0;               /* 1 = restaurando partida: suprimir _party_save_all */
 
 /* -- DAT -------------------------------------------------------------------- */
 static FILE*     g_gfx_f    = NULL;
@@ -390,8 +391,47 @@ static int         g_obj_gfx_count = 0;
  * engine_place_object_ex lo restaura al volver a la room. */
 #define MAX_OBJ_STATE_PERSIST 64
 typedef struct { char obj_id[32]; char state_key[32]; } ObjStatePersist;
+#define MAX_OBJ_VIS_PERSIST 64
+typedef struct { char obj_id[32]; u8 visible; } ObjVisPersist;
+static ObjVisPersist g_obj_vis_persist[MAX_OBJ_VIS_PERSIST];
+static int           g_obj_vis_persist_count = 0;
+
+#define MAX_OBJ_POS_PERSIST 32
+typedef struct { char obj_id[32]; s16 x; s16 y; } ObjPosPersist;
+static ObjPosPersist g_obj_pos_persist[MAX_OBJ_POS_PERSIST];
+static int           g_obj_pos_persist_count = 0;
+
 static ObjStatePersist g_obj_state_persist[MAX_OBJ_STATE_PERSIST];
 static int             g_obj_state_persist_count = 0;
+
+static void _obj_vis_persist_set(const char* obj_id, u8 visible) {
+    int i;
+    for (i = 0; i < g_obj_vis_persist_count; i++) {
+        if (_str_eq(g_obj_vis_persist[i].obj_id, obj_id)) {
+            g_obj_vis_persist[i].visible = visible; return;
+        }
+    }
+    if (g_obj_vis_persist_count < MAX_OBJ_VIS_PERSIST) {
+        _strlcpy(g_obj_vis_persist[g_obj_vis_persist_count].obj_id, obj_id, 32);
+        g_obj_vis_persist[g_obj_vis_persist_count].visible = visible;
+        g_obj_vis_persist_count++;
+    }
+}
+
+static void _obj_pos_persist_set(const char* obj_id, s16 x, s16 y) {
+    int i;
+    for (i = 0; i < g_obj_pos_persist_count; i++) {
+        if (_str_eq(g_obj_pos_persist[i].obj_id, obj_id)) {
+            g_obj_pos_persist[i].x = x; g_obj_pos_persist[i].y = y; return;
+        }
+    }
+    if (g_obj_pos_persist_count < MAX_OBJ_POS_PERSIST) {
+        _strlcpy(g_obj_pos_persist[g_obj_pos_persist_count].obj_id, obj_id, 32);
+        g_obj_pos_persist[g_obj_pos_persist_count].x = x;
+        g_obj_pos_persist[g_obj_pos_persist_count].y = y;
+        g_obj_pos_persist_count++;
+    }
+}
 
 static void _obj_state_persist_set(const char* obj_id, const char* state_key) {
     int i;
@@ -419,12 +459,27 @@ static const char* _obj_state_persist_get(const char* obj_id) {
 /* Aplica estados persistidos a todos los objetos ya registrados en la room actual.
  * Se llama ANTES de _room_predecode_all() para que el predecode use el PCX correcto. */
 static void _apply_persisted_states(void) {
-    int i;
+    int i, j;
     for (i = 0; i < g_obj_count; i++) {
         Obj* o = &g_objects[i];
-        const char* st = _obj_state_persist_get(o->obj_id[0] ? o->obj_id : o->id);
-        if (st && st[0] && !_str_eq(o->state, st))
-            engine_set_object_state(o->id, st);
+        const char* key = o->obj_id[0] ? o->obj_id : o->id;
+        /* Estado visual */
+        { const char* st = _obj_state_persist_get(key);
+          if (st && st[0] && !_str_eq(o->state, st))
+              engine_set_object_state(o->id, st); }
+        /* Visibilidad */
+        for (j = 0; j < g_obj_vis_persist_count; j++) {
+            if (_str_eq(g_obj_vis_persist[j].obj_id, key)) {
+                o->visible = g_obj_vis_persist[j].visible; break;
+            }
+        }
+        /* Posicion */
+        for (j = 0; j < g_obj_pos_persist_count; j++) {
+            if (_str_eq(g_obj_pos_persist[j].obj_id, key)) {
+                o->x = g_obj_pos_persist[j].x;
+                o->y = g_obj_pos_persist[j].y; break;
+            }
+        }
     }
 }
 
@@ -467,6 +522,33 @@ static InvSlot* _inv_prot_slot(int visual_idx) {
     return NULL;
 }
 
+/* Registro permanente de place_fn por char_id.
+ * Persiste entre partidas para que _save_read pueda restaurar miembros del party
+ * aunque el script de la room no los haya registrado en esta sesion. */
+#define MAX_PARTY_REG 16
+typedef struct { char id[32]; void (*place_fn)(s16, s16); } PartyReg;
+static PartyReg g_party_reg[MAX_PARTY_REG];
+static int      g_party_reg_count = 0;
+
+static void _party_reg_set(const char* id, void (*fn)(s16, s16)) {
+    int i;
+    for (i = 0; i < g_party_reg_count; i++) {
+        if (_str_eq(g_party_reg[i].id, id)) { g_party_reg[i].place_fn = fn; return; }
+    }
+    if (g_party_reg_count < MAX_PARTY_REG) {
+        _strlcpy(g_party_reg[g_party_reg_count].id, id, 32);
+        g_party_reg[g_party_reg_count].place_fn = fn;
+        g_party_reg_count++;
+    }
+}
+
+static void (*_party_reg_get(const char* id))(s16, s16) {
+    int i;
+    for (i = 0; i < g_party_reg_count; i++)
+        if (_str_eq(g_party_reg[i].id, id)) return g_party_reg[i].place_fn;
+    return NULL;
+}
+
 /* -- Party helpers ---------------------------------------------------------- */
 /* Busca en g_party por id. Devuelve indice o -1 si no encontrado. */
 static int _party_find(const char* id) {
@@ -480,6 +562,7 @@ static int _party_find(const char* id) {
  * en la room actual. Llamar ANTES de _room_clear_state() en engine_change_room. */
 static void _party_save_all(void) {
     int i, idx;
+    if (g_loading_save) return; /* no sobreescribir posiciones guardadas durante restore */
     if (g_party_count == 0 || !g_cur_room[0]) return;
     for (i = 0; i < g_char_count; i++) {
         idx = _party_find(g_chars[i].id);
@@ -578,6 +661,7 @@ static int g_ui_hidden          = 0;  /* 1 = ocultar verbos+inventario durante s
 static void (*g_pre_flip_fn)(void) = NULL; /* hook llamado justo antes de _vga_flip — para overlays sobre la escena */
 static int g_bg_fullscreen      = 0;  /* 1 = fondo 320x200, sin UI, sin hover, sin exits */
 static int g_restart_requested  = 0;  /* 1 = reiniciar partida desde el principio */
+static int g_room_no_save       = 0;  /* 1 = guardar deshabilitado en esta sala */
 
 /* Estado de move_text no bloqueante (bloque paralelo) */
 static int    g_mtext_active = 0;
@@ -2132,6 +2216,11 @@ void engine_place_char(const char* char_id, s16 x, s16 y,
                 char_id, g_party[_pfc].room_id, g_cur_room);
             return;
         }
+        /* Usar posicion guardada solo al restaurar partida (no en partida nueva) */
+        if (g_loading_save && _pfc >= 0 && g_party[_pfc].room_id[0]) {
+            x = g_party[_pfc].x;
+            y = g_party[_pfc].y;
+        }
     }
 
     c = &g_chars[g_char_count];
@@ -2221,10 +2310,17 @@ void engine_place_char(const char* char_id, s16 x, s16 y,
     c->frame_cur = 0;
     c->frame_timer = 0;
 
-    /* Solo actualizar g_protagonist si no hay ninguno valido todavia.
-     * Las llamadas de on_room_enter para miembros no-activos del party
-     * no deben sobreescribir al protagonista ya fijado por reinject/party_switch. */
-    if (is_protagonist && (g_char_count == 0 || g_protagonist >= g_char_count))
+    /* Restaurar direccion guardada del party (si existe) */
+    { int _pfd = _party_find(char_id);
+      if (_pfd >= 0 && g_party[_pfd].dir[0]) {
+          _strlcpy(c->dir, g_party[_pfd].dir, 8);
+          c->dir_left = _str_eq(g_party[_pfd].dir, "left") ? 1 : 0;
+      }
+    }
+    /* Siempre actualizar g_protagonist al indice correcto cuando se coloca el protagonista.
+     * Con _room_clear_state() en engine_reset_game, on_room_enter puede colocar otros
+     * personajes antes que el protagonista; la condicion anterior no actualizaba en ese caso. */
+    if (is_protagonist)
         g_protagonist = g_char_count;
     g_char_count++;
 }
@@ -2538,6 +2634,12 @@ void engine_face_dir(const char* char_id, const char* direction) {
             c->pcx_buf  = new_buf;
             c->pcx_size = new_sz;
             _strlcpy(c->pcx_loaded, pcx_id, 32);
+            /* Pre-decodificar: si _hit_char se llama antes del primer render,
+             * dec_w/dec_h = 0 y el hitbox cae al fallback de solo los pies. */
+            { u16 _dw=0, _dh=0;
+              _pcx_decode(new_buf, new_sz, g_pcx_decode_buf, &_dw, &_dh, 0);
+              if (_dw>0 && _dh>0) { c->dec_w=_dw; c->dec_h=_dh; }
+            }
         } else {
             DBG("WARN: engine_face_dir: PCX no encontrado: %s, usando idle\n", pcx_id);
             CHAR_SET_ANIM(c, ANIM_IDLE);
@@ -2627,8 +2729,14 @@ void engine_set_dialogue_colors(u8 bg, u8 brd, u8 txt, u8 sel) {
 void engine_party_add(const char* char_id, void (*place_fn)(s16, s16)) {
     Char* c;
     int idx;
+    _party_reg_set(char_id, place_fn); /* registrar place_fn permanentemente */
     if (g_party_count >= MAX_PARTY) return;
-    if (_party_find(char_id) >= 0) return; /* ya en el grupo */
+    { int _epa = _party_find(char_id);
+      if (_epa >= 0) {
+          if (!g_party[_epa].place_fn) g_party[_epa].place_fn = place_fn;
+          return;
+      }
+    }
     idx = g_party_count++;
     memset(&g_party[idx], 0, sizeof(PartySlot));
     _strlcpy(g_party[idx].id, char_id, 32);
@@ -2746,7 +2854,9 @@ void engine_place_object_ex(const char* inst_id, const char* obj_id,
 }
 
 void engine_move_object(const char* obj_id, s16 x, s16 y) {
-    Obj* o = _find_obj(obj_id); if (o) { o->x = x; o->y = y; }
+    Obj* o = _find_obj(obj_id);
+    if (o) { o->x = x; o->y = y; }
+    _obj_pos_persist_set(obj_id, x, y);
 }
 void engine_set_object_state(const char* obj_id, const char* state_id) {
     Obj* o = _find_obj(obj_id);
@@ -2797,7 +2907,9 @@ void engine_set_object_state(const char* obj_id, const char* state_id) {
     }
 }
 void engine_set_object_visible(const char* obj_id, int visible) {
-    Obj* o = _find_obj(obj_id); if (o) o->visible = (u8)visible;
+    Obj* o = _find_obj(obj_id);
+    if (o) o->visible = (u8)visible;
+    _obj_vis_persist_set(obj_id, (u8)visible);
 }
 /* loop=1: animacion en bucle (defecto). loop=0: one-shot, para en el ultimo frame. */
 void engine_set_object_anim_loop(const char* obj_id, int loop) {
@@ -3221,7 +3333,10 @@ static void _room_predecode_all(void) {
     }
 }
 
+void engine_set_room_no_save(int v) { g_room_no_save = v; }
+
 void engine_load_bg(const char* gfx_id) {
+    g_room_no_save = 0;
     u32 sz;
     u8* pcx;
     u16 w, h;
@@ -3260,6 +3375,7 @@ void engine_load_bg_fullscreen(const char* gfx_id) {
     u32 sz; u8* pcx; u16 w, h; int r;
     g_bg_fullscreen = 1;
     g_ui_hidden     = 1;
+    g_room_no_save  = 0;
     if (!gfx_id || !gfx_id[0]) {
         memset(g_bgbuf, 0, AG_SCREEN_PIXELS); memset(g_backbuf, 0, AG_SCREEN_PIXELS);
         g_bg_full_w = AG_SCREEN_W; g_bg_full_h = AG_SCREEN_H; g_cam_x = 0; g_room_scroll_w = 0; return;
@@ -5544,11 +5660,13 @@ static int                    _dlg_panel_active = 0;
 static const DialogueNode*    _dlg_panel_node   = NULL;
 static int                    _dlg_panel_cval[MAX_DIALOGUE_OPTS];
 static int                    _dlg_panel_cnv    = 0;
-/* hov: -1=nada  >=0=opt_idx  -2=scroll_up  -3=scroll_dn */
+/* hov: -1=nada  >=0=panel_item_idx  -2=scroll_up  -3=scroll_dn */
 static int                    _dlg_panel_hov    = -1;
 static DlgLine                _dlg_lines[DLG_MAX_TOT];
 static int                    _dlg_total_lines  = 0;
 static int                    _dlg_scroll       = 0;
+/* -1 = nada; >=0 = _dlg_panel_cval[idx] elegido por teclado */
+static int                    g_dlg_kb_chosen   = -1;
 
 /* Precalcula lineas con word-wrap para todas las opciones visibles */
 static void _dlg_build_lines(void) {
@@ -5708,12 +5826,14 @@ void engine_run_dialogue(const DialogueNode* nodes, int n, const char* start_id)
         if (cur->num_lines == 0) {
             /* Nodo sin lineas (action/branch) — procesar y continuar */
         } else {
-            /* Esperar a que el jugador avance (con animaciones corriendo) */
+            /* Esperar a que el jugador avance: click, ENTER/SPACE o timeout */
             u32 t0 = g_ticks_ms;
+            g_overlay_click_seen = 0;
             while (g_running && _overlays_active()) {
                 if (g_ticks_ms - t0 > 5000) break;
                 engine_flip();
                 if (!engine_process_input()) break;
+                if (g_overlay_click_seen) break;
             }
             _overlay_clear_all();
             g_overlay_click_seen = 0;
@@ -5801,13 +5921,21 @@ void engine_run_dialogue(const DialogueNode* nodes, int n, const char* start_id)
                         _dlg_panel_hov = -1;
                     }
                 } else {
-                    _dlg_panel_hov = -1;
+                    /* Fuera de la zona UI: limpiar indicadores de scroll (-2/-3)
+                     * pero conservar la seleccion de teclado (_dlg_panel_hov >= 0) */
+                    if (_dlg_panel_hov < 0) _dlg_panel_hov = -1;
                 }
 
                 engine_flip();
                 if (!engine_process_input()) break;
 
-                if (g_mouse.buttons & 1) {
+                /* Seleccion por teclado (UP/DOWN/ENTER procesados en engine_process_input) */
+                if (g_dlg_kb_chosen >= 0) {
+                    _chosen = g_dlg_kb_chosen;
+                    g_dlg_kb_chosen = -1;
+                }
+
+                if (_chosen < 0 && (g_mouse.buttons & 1)) {
                     if (_dlg_panel_hov >= 0) {
                         _chosen = _dlg_panel_cval[_dlg_panel_hov];
                         while (g_mouse.buttons) _mouse_poll();
@@ -7128,6 +7256,368 @@ static int _confirm_run(const char* msg_key, const char* msg_fallback) {
     return confirmed;
 }
 
+/* ===========================================================================
+ * SAVE / LOAD — sistema de guardado de partida
+ * Ficheros: SAVE0.SAV … SAVE9.SAV  (binario, pragma pack 1)
+ * =========================================================================== */
+
+#define SAVE_SLOTS       10
+#define SAVE_DESC_LEN    40
+#define SAVE_MAGIC       0x4B4D4741u
+#define SAVE_VERSION     0x0006u
+
+#pragma pack(push,1)
+typedef struct {
+    u32  magic;
+    u16  version;
+    char desc[SAVE_DESC_LEN];
+    char cur_room[32];
+    char active_prot[32];
+    s16  cam_x;          /* scroll horizontal de la room guardada */
+    u8   party_count;
+    struct { char id[32]; char room_id[32]; s16 x; s16 y; char dir[8]; char face_pcx_id[32]; u8 cur_anim; } party[MAX_PARTY];
+    u8   inv_count;
+    struct { char obj_id[32]; char char_owner[32]; } inv[MAX_INVENTORY];
+    u16  flag_count;
+    struct { char name[32]; s32 value; } flags[MAX_FLAGS];
+    u8   obj_state_count;
+    struct { char obj_id[32]; char state_key[32]; } obj_states[MAX_OBJ_STATE_PERSIST];
+    u8   obj_vis_count;
+    struct { char obj_id[32]; u8 visible; } obj_vis[MAX_OBJ_VIS_PERSIST];
+    u8   obj_pos_count;
+    struct { char obj_id[32]; s16 x; s16 y; } obj_pos[MAX_OBJ_POS_PERSIST];
+    u8   exit_state_count;
+    struct { char room_id[32]; char exit_id[32]; u8 enabled; } exit_states[MAX_EXIT_STATES];
+} SaveData;
+#pragma pack(pop)
+
+static void _save_filename(int slot, char* out) {
+    out[0]='S'; out[1]='A'; out[2]='V'; out[3]='E';
+    out[4]=(char)('0'+slot); out[5]='.'; out[6]='S';
+    out[7]='A'; out[8]='V'; out[9]='\0';
+}
+
+static int _save_probe(int slot, char* desc) {
+    char fname[16]; FILE* f; u32 mag; u16 ver;
+    _save_filename(slot, fname);
+    desc[0] = '\0';
+    f = fopen(fname, "rb");
+    if (!f) return 0;
+    if (fread(&mag, 4, 1, f) != 1 || mag != SAVE_MAGIC) { fclose(f); return 0; }
+    if (fread(&ver, 2, 1, f) != 1 || ver != SAVE_VERSION) { fclose(f); return 0; }
+    fread(desc, 1, SAVE_DESC_LEN, f);
+    desc[SAVE_DESC_LEN-1] = '\0';
+    fclose(f);
+    return 1;
+}
+
+static int _save_write(int slot, const char* desc) {
+    char fname[16]; FILE* f; int i;
+    SaveData sd;
+    _party_save_all(); /* sincronizar posiciones g_chars → g_party antes de serializar */
+    memset(&sd, 0, sizeof(sd));
+    sd.magic   = SAVE_MAGIC;
+    sd.version = SAVE_VERSION;
+    _strlcpy(sd.desc, desc, SAVE_DESC_LEN);
+    _strlcpy(sd.cur_room,    g_cur_room,    32);
+    _strlcpy(sd.active_prot, g_active_prot_id[0] ? g_active_prot_id :
+             (g_char_count>0 ? g_chars[g_protagonist].id : ""), 32);
+    sd.cam_x = g_cam_x;
+    sd.party_count = (u8)(g_party_count > MAX_PARTY ? MAX_PARTY : g_party_count);
+    for (i = 0; i < (int)sd.party_count; i++) {
+        _strlcpy(sd.party[i].id,          g_party[i].id,          32);
+        _strlcpy(sd.party[i].room_id,     g_party[i].room_id,     32);
+        sd.party[i].x = g_party[i].x;
+        sd.party[i].y = g_party[i].y;
+        _strlcpy(sd.party[i].dir,         g_party[i].dir,         8);
+        _strlcpy(sd.party[i].face_pcx_id, g_party[i].face_pcx_id, 32);
+        sd.party[i].cur_anim = g_party[i].cur_anim;
+    }
+    sd.inv_count = (u8)(g_inv_count > MAX_INVENTORY ? MAX_INVENTORY : g_inv_count);
+    for (i = 0; i < (int)sd.inv_count; i++) {
+        _strlcpy(sd.inv[i].obj_id,     g_inventory[i].obj_id,     32);
+        _strlcpy(sd.inv[i].char_owner, g_inventory[i].char_owner, 32);
+    }
+    sd.flag_count = (u16)(g_flag_count > MAX_FLAGS ? MAX_FLAGS : g_flag_count);
+    for (i = 0; i < (int)sd.flag_count; i++) {
+        _strlcpy(sd.flags[i].name, g_flags[i].name, 32);
+        sd.flags[i].value = (s32)g_flags[i].value;
+    }
+    sd.obj_state_count = (u8)(g_obj_state_persist_count > MAX_OBJ_STATE_PERSIST
+                              ? MAX_OBJ_STATE_PERSIST : g_obj_state_persist_count);
+    for (i = 0; i < (int)sd.obj_state_count; i++) {
+        _strlcpy(sd.obj_states[i].obj_id,    g_obj_state_persist[i].obj_id,    32);
+        _strlcpy(sd.obj_states[i].state_key, g_obj_state_persist[i].state_key, 32);
+    }
+    sd.obj_vis_count = (u8)(g_obj_vis_persist_count > MAX_OBJ_VIS_PERSIST
+                            ? MAX_OBJ_VIS_PERSIST : g_obj_vis_persist_count);
+    for (i = 0; i < (int)sd.obj_vis_count; i++) {
+        _strlcpy(sd.obj_vis[i].obj_id, g_obj_vis_persist[i].obj_id, 32);
+        sd.obj_vis[i].visible = g_obj_vis_persist[i].visible;
+    }
+    sd.obj_pos_count = (u8)(g_obj_pos_persist_count > MAX_OBJ_POS_PERSIST
+                            ? MAX_OBJ_POS_PERSIST : g_obj_pos_persist_count);
+    for (i = 0; i < (int)sd.obj_pos_count; i++) {
+        _strlcpy(sd.obj_pos[i].obj_id, g_obj_pos_persist[i].obj_id, 32);
+        sd.obj_pos[i].x = g_obj_pos_persist[i].x;
+        sd.obj_pos[i].y = g_obj_pos_persist[i].y;
+    }
+    sd.exit_state_count = (u8)(g_exit_state_count > MAX_EXIT_STATES
+                               ? MAX_EXIT_STATES : g_exit_state_count);
+    for (i = 0; i < (int)sd.exit_state_count; i++) {
+        _strlcpy(sd.exit_states[i].room_id, g_exit_states[i].room_id, 32);
+        _strlcpy(sd.exit_states[i].exit_id, g_exit_states[i].exit_id, 32);
+        sd.exit_states[i].enabled = g_exit_states[i].enabled;
+    }
+    _save_filename(slot, fname);
+    f = fopen(fname, "wb");
+    if (!f) return 0;
+    fwrite(&sd, sizeof(sd), 1, f);
+    fclose(f);
+    return 1;
+}
+
+static int _save_read(int slot) {
+    char fname[16]; FILE* f; int i;
+    SaveData sd;
+    _save_filename(slot, fname);
+    f = fopen(fname, "rb");
+    if (!f) return 0;
+    if (fread(&sd, sizeof(sd), 1, f) != 1) { fclose(f); return 0; }
+    fclose(f);
+    if (sd.magic != SAVE_MAGIC || sd.version != SAVE_VERSION) return 0;
+    /* Activar flag ANTES de tocar g_party: impide que engine_switch_protagonist
+     * o cualquier callback invoque _party_save_all() y sobreescriba las
+     * posiciones que estamos a punto de restaurar del fichero. */
+    g_loading_save = 1;
+    /* --- flags --- */
+    g_flag_count = 0;
+    for (i = 0; i < (int)sd.flag_count; i++)
+        engine_set_flag(sd.flags[i].name, (int)sd.flags[i].value);
+    /* --- estados de objetos (visual) --- */
+    g_obj_state_persist_count = 0;
+    for (i = 0; i < (int)sd.obj_state_count; i++)
+        _obj_state_persist_set(sd.obj_states[i].obj_id, sd.obj_states[i].state_key);
+    /* --- visibilidad de objetos --- */
+    g_obj_vis_persist_count = 0;
+    for (i = 0; i < (int)sd.obj_vis_count; i++) {
+        _strlcpy(g_obj_vis_persist[g_obj_vis_persist_count].obj_id, sd.obj_vis[i].obj_id, 32);
+        g_obj_vis_persist[g_obj_vis_persist_count].visible = sd.obj_vis[i].visible;
+        g_obj_vis_persist_count++;
+    }
+    /* --- posiciones de objetos --- */
+    g_obj_pos_persist_count = 0;
+    for (i = 0; i < (int)sd.obj_pos_count; i++) {
+        _strlcpy(g_obj_pos_persist[g_obj_pos_persist_count].obj_id, sd.obj_pos[i].obj_id, 32);
+        g_obj_pos_persist[g_obj_pos_persist_count].x = sd.obj_pos[i].x;
+        g_obj_pos_persist[g_obj_pos_persist_count].y = sd.obj_pos[i].y;
+        g_obj_pos_persist_count++;
+    }
+    /* --- estados de salidas (puertas abiertas/cerradas) --- */
+    g_exit_state_count = 0;
+    for (i = 0; i < (int)sd.exit_state_count; i++) {
+        _strlcpy(g_exit_states[g_exit_state_count].room_id, sd.exit_states[i].room_id, 32);
+        _strlcpy(g_exit_states[g_exit_state_count].exit_id, sd.exit_states[i].exit_id, 32);
+        g_exit_states[g_exit_state_count].enabled = sd.exit_states[i].enabled;
+        g_exit_state_count++;
+    }
+    /* --- inventario --- */
+    for (i = 0; i < g_inv_count; i++) {
+        if (g_inventory[i].owns_buf && g_inventory[i].pcx_buf)
+            free(g_inventory[i].pcx_buf);
+    }
+    g_inv_count = 0;
+    for (i = 0; i < (int)sd.inv_count; i++)
+        engine_give_object(sd.inv[i].obj_id, sd.inv[i].char_owner[0]
+                           ? sd.inv[i].char_owner : NULL);
+    /* --- composicion y posiciones del party ---
+     * Para cada miembro guardado: si ya esta en g_party, actualizar posicion;
+     * si no esta, añadirlo (con place_fn del registro si existe). */
+    for (i = 0; i < (int)sd.party_count; i++) {
+        int pi = _party_find(sd.party[i].id);
+        if (pi < 0) {
+            if (g_party_count >= MAX_PARTY) continue;
+            pi = g_party_count++;
+            memset(&g_party[pi], 0, sizeof(PartySlot));
+            _strlcpy(g_party[pi].id, sd.party[i].id, 32);
+            g_party[pi].place_fn = _party_reg_get(sd.party[i].id);
+        }
+        _strlcpy(g_party[pi].room_id, sd.party[i].room_id, 32);
+        g_party[pi].x = sd.party[i].x;
+        g_party[pi].y = sd.party[i].y;
+        _strlcpy(g_party[pi].dir, sd.party[i].dir, 8);
+        g_party[pi].cur_anim = sd.party[i].cur_anim;
+    }
+    /* --- cargar sala --- */
+    /* Suprimir reinject del protagonista obsoleto: en rooms con scroll por mitades
+     * el reinject usaria la posicion PRE-carga y el snap de camara apuntaria al
+     * half incorrecto. El reinstate loop colocara a TODOS los miembros del party
+     * (incluido el protagonista) en sus posiciones guardadas via place_fn. */
+    g_suppress_prot_reinject = 1;
+    if (sd.active_prot[0]) engine_switch_protagonist(sd.active_prot);
+    engine_change_room(sd.cur_room, "");
+    g_loading_save = 0;
+    /* --- override posicion/dir de TODOS los chars del party en esta sala ---
+     * Leemos directamente de sd.party[] porque engine_change_room puede haber
+     * actualizado g_party con posiciones de la room recien cargada. */
+    { int ci, spi;
+      for (ci = 0; ci < g_char_count; ci++) {
+          for (spi = 0; spi < (int)sd.party_count; spi++) {
+              if (!_str_eq(g_chars[ci].id, sd.party[spi].id)) continue;
+              g_chars[ci].x        = sd.party[spi].x;
+              g_chars[ci].y        = sd.party[spi].y;
+              g_chars[ci].walking  = 0;
+              g_chars[ci].path_len = 0;
+              if (sd.party[spi].dir[0]) {
+                  /* Derivar la direccion completa (lateral + vertical) del anim guardado */
+                  const char* _fdir;
+                  if (sd.party[spi].cur_anim == ANIM_IDLE_UP)
+                      _fdir = "back";
+                  else if (sd.party[spi].cur_anim == ANIM_IDLE_DOWN)
+                      _fdir = "front";
+                  else
+                      _fdir = sd.party[spi].dir; /* "left" o "right" */
+                  engine_face_dir(g_chars[ci].id, _fdir);
+              }
+              /* Sincronizar g_party para consistencia */
+              { int pi = _party_find(g_chars[ci].id);
+                if (pi >= 0) {
+                    g_party[pi].x = sd.party[spi].x;
+                    g_party[pi].y = sd.party[spi].y;
+                    _strlcpy(g_party[pi].dir, sd.party[spi].dir, 8);
+                    g_party[pi].cur_anim = sd.party[spi].cur_anim;
+                    _strlcpy(g_party[pi].room_id, sd.cur_room, 32);
+                }
+              }
+              break;
+          }
+      }
+    }
+    /* --- restaurar caras del party (panel de selector) --- */
+    for (i = 0; i < (int)sd.party_count; i++) {
+        if (sd.party[i].face_pcx_id[0])
+            engine_set_char_face_sprite(sd.party[i].id, sd.party[i].face_pcx_id);
+    }
+    engine_set_cam_x(sd.cam_x);
+    return 1;
+}
+
+#define SV_SLOTS_VIS  8
+#define SV_BH         14
+#define SV_BPAD        2
+#define SV_PW        280
+#define SV_PH        (22 + SV_SLOTS_VIS*(SV_BH+SV_BPAD) + 6)
+#define SV_PX        ((AG_SCREEN_W-SV_PW)/2)
+#define SV_PY        ((AG_SCREEN_H-SV_PH)/2)
+
+static int _save_edit_desc(char* buf, int maxlen, s16 bx, s16 by, s16 bw) {
+    int len = (int)strlen(buf); int done = 0; int ok = 0;
+    while (!done) {
+        _fill_rect(bx, by, bw, SV_BH, MENU_COL_SEL);
+        _draw_rect_border(bx, by, bw, SV_BH, MENU_COL_BRD);
+        engine_draw_text((s16)(bx+4),(s16)(by+SV_BH/2-3),FONT_SMALL,MENU_COL_TXT,0,buf);
+        { s16 cw=engine_text_width(FONT_SMALL,buf);
+          s16 cx=(s16)(bx+4+cw);
+          if (cx<bx+bw-4) _fill_rect(cx,(s16)(by+3),1,(s16)(SV_BH-6),MENU_COL_TXT); }
+        _vga_flip();
+        _mouse_poll();
+        if (!kbhit()) continue;
+        { int k=getch();
+          if (k==27) { done=1; ok=0; }
+          else if (k==13) { done=1; ok=1; }
+          else if (k==8) { if (len>0) buf[--len]='\0'; }
+          else if (k>=32 && k<256 && len<maxlen-1) { buf[len++]=(char)k; buf[len]='\0'; }
+          else if (k==0||k==0xE0) getch();
+        }
+    }
+    return ok;
+}
+
+static void _savemenu_draw(int is_save, int sel, int scroll,
+                           char descs[SAVE_SLOTS][SAVE_DESC_LEN], int has[SAVE_SLOTS]) {
+    int i;
+    const char* title = is_save ? "Guardar partida" : "Restaurar partida";
+    const char* t = engine_text(is_save ? "menu.guardar_partida" : "menu.restaurar_partida");
+    if (t && t[0] && t != (is_save?"menu.guardar_partida":"menu.restaurar_partida")) title=t;
+    _fill_rect(SV_PX,SV_PY,SV_PW,SV_PH,MENU_COL_BG);
+    _draw_rect_border(SV_PX,SV_PY,SV_PW,SV_PH,MENU_COL_BRD);
+    _draw_rect_border((s16)(SV_PX+1),(s16)(SV_PY+1),(s16)(SV_PW-2),(s16)(SV_PH-2),(u8)(MENU_COL_BG+4));
+    _draw_text_centered(SV_PX,(s16)(SV_PX+SV_PW),(s16)(SV_PY+6),FONT_SMALL,MENU_COL_TXT,0,title);
+    for (i=0; i<SV_SLOTS_VIS; i++) {
+        int si=scroll+i; if (si>=SAVE_SLOTS) break;
+        { s16 bx=(s16)(SV_PX+10), by=(s16)(SV_PY+22+i*(SV_BH+SV_BPAD)), bw=(s16)(SV_PW-20);
+          u8 bc=(si==sel)?MENU_COL_SEL:MENU_COL_BTN;
+          char label[52]; char num[4];
+          num[0]='0'+si; num[1]='.'; num[2]=' '; num[3]='\0';
+          _strlcpy(label,num,sizeof(label));
+          if (has[si]) _strlcpy(label+3,descs[si],(int)(sizeof(label)-3));
+          else _strlcpy(label+3,"[Vacio]",sizeof(label)-3);
+          _fill_rect(bx,by,bw,SV_BH,bc);
+          _draw_rect_border(bx,by,bw,SV_BH,MENU_COL_BRD);
+          engine_draw_text((s16)(bx+4),(s16)(by+SV_BH/2-3),FONT_SMALL,MENU_COL_TXT,0,label);
+        }
+    }
+    if (scroll>0)
+        _draw_text_centered(SV_PX,(s16)(SV_PX+SV_PW),(s16)(SV_PY+22-1),FONT_SMALL,MENU_COL_TXT,0,"^");
+    if (scroll+SV_SLOTS_VIS<SAVE_SLOTS)
+        _draw_text_centered(SV_PX,(s16)(SV_PX+SV_PW),
+                            (s16)(SV_PY+22+SV_SLOTS_VIS*(SV_BH+SV_BPAD)),
+                            FONT_SMALL,MENU_COL_TXT,0,"v");
+    _vga_flip();
+}
+
+static void _savemenu_run(int is_save) {
+    static u8 saved_sv[AG_SCREEN_PIXELS];
+    char descs[SAVE_SLOTS][SAVE_DESC_LEN];
+    int  has[SAVE_SLOTS]; int sel=0, scroll=0, i;
+    memcpy(saved_sv, g_backbuf, AG_SCREEN_PIXELS);
+    for (i=0; i<SAVE_SLOTS; i++) has[i]=_save_probe(i,descs[i]);
+    _savemenu_draw(is_save,sel,scroll,descs,has);
+    /* Drenar el clic que abrio el menu: si el boton sigue pulsado al entrar
+     * el primer _mouse_poll lo veria como "chose=0" y guardaria sin querer. */
+    while (g_mouse.buttons) _mouse_poll();
+    while (1) {
+        int chose=-1;
+        _mouse_poll();
+        for (i=0; i<SV_SLOTS_VIS; i++) {
+            int si=scroll+i; if (si>=SAVE_SLOTS) break;
+            { s16 bx=(s16)(SV_PX+10),by=(s16)(SV_PY+22+i*(SV_BH+SV_BPAD)),bw=(s16)(SV_PW-20);
+              if (g_mouse.x>=bx&&g_mouse.x<bx+bw&&g_mouse.y>=by&&g_mouse.y<by+SV_BH) {
+                  if (sel!=si){sel=si;_savemenu_draw(is_save,sel,scroll,descs,has);}
+                  if (g_mouse.buttons&1){do{_mouse_poll();}while(g_mouse.buttons);chose=si;}
+              }
+            }
+        }
+        if (kbhit()) {
+            int k=getch();
+            if (k==27) break;
+            if (k==13){chose=sel;}
+            else if (k==0||k==0xE0) {
+                k=getch();
+                if (k==72){if(sel>0){sel--;if(sel<scroll)scroll--;_savemenu_draw(is_save,sel,scroll,descs,has);}}
+                else if(k==80){if(sel<SAVE_SLOTS-1){sel++;if(sel>=scroll+SV_SLOTS_VIS)scroll++;_savemenu_draw(is_save,sel,scroll,descs,has);}}
+            }
+        }
+        if (chose<0) continue;
+        if (is_save) {
+            char newdesc[SAVE_DESC_LEN];
+            _strlcpy(newdesc,has[chose]?descs[chose]:"",SAVE_DESC_LEN);
+            { s16 bx=(s16)(SV_PX+10),by=(s16)(SV_PY+22+((chose-scroll)*(SV_BH+SV_BPAD))),bw=(s16)(SV_PW-20);
+              if (_save_edit_desc(newdesc,SAVE_DESC_LEN,bx,by,bw)) {
+                  _save_write(chose,newdesc);
+                  _strlcpy(descs[chose],newdesc,SAVE_DESC_LEN); has[chose]=1;
+                  _savemenu_draw(is_save,sel,scroll,descs,has);
+              } else { break; } /* ESC en edicion de descripcion → salir del menu */
+            }
+        } else {
+            if (!has[chose]) continue;
+            memcpy(g_backbuf,saved_sv,AG_SCREEN_PIXELS);
+            _save_read(chose); return;
+        }
+    }
+    memcpy(g_backbuf,saved_sv,AG_SCREEN_PIXELS);
+}
+
 static void _menu_handle_result(int result) {
     switch (result) {
     case 0: /* Continuar */ break;
@@ -7138,8 +7628,15 @@ static void _menu_handle_result(int result) {
             g_running = 0;
         }
         break;
-    case 2: /* Guardar partida — TODO */ break;
-    case 3: /* Restaurar partida — TODO */ break;
+    case 2: /* Guardar partida */
+        if (g_room_no_save)
+            _confirm_run("sys.no_save_here", "No se puede guardar en este momento.");
+        else
+            _savemenu_run(1);
+        break;
+    case 3: /* Restaurar partida */
+        _savemenu_run(0);
+        break;
     case 4: /* Configuracion */ _config_run(); break;
     case 5: /* Salir a DOS */
         g_running = 0;
@@ -7231,7 +7728,7 @@ int engine_process_input(void) {
               if (sc == 59) { /* F1 — menu in-game */
                   _menu_handle_result(_menu_run());
                   if (!g_running) return 0;
-              } else if (!g_script_running) {
+              } else if (!g_script_running || _dlg_panel_active) {
                   switch (sc) {
                       case 72: kb_dy -= KB_SPEED; break; /* Arriba    */
                       case 80: kb_dy += KB_SPEED; break; /* Abajo     */
@@ -7242,8 +7739,19 @@ int engine_process_input(void) {
           } else if (k == 27) {
               _menu_handle_result(_menu_run());
               if (!g_running) return 0;
-          } else if ((k == 13 || k == 32) && !g_script_running) {
-              kb_buttons |= 1;
+          } else if (k == 13 || k == 32) {
+              if (_dlg_panel_active && _dlg_panel_hov >= 0) {
+                  g_dlg_kb_chosen = _dlg_panel_cval[_dlg_panel_hov];
+              } else if (g_script_running && _overlays_active()) {
+                  /* ENTER/SPACE adelanta la linea de dialogo activa */
+                  g_overlay_click_seen = 1;
+              } else if (!g_script_running) {
+                  /* Si hay overlays activos (engine_say sin g_script_running),
+                   * activar click_seen directamente — el goto fullscreen saltaria
+                   * la linea 7526 donde normalmente se activa por click simulado. */
+                  if (_overlays_active()) g_overlay_click_seen = 1;
+                  kb_buttons |= 1;
+              }
           }
       }
 
@@ -8598,20 +9106,34 @@ void engine_reset_game(void) {
     g_inv_scroll     = 0;
     g_inv_hover      = -1;
     g_selected_inv[0]= '\0';
-    /* Party */
+    /* Party: resetear posiciones pero mantener miembros y caras para nueva partida.
+     * Si vaciamos g_party_count, engine_party_add (que solo se llama antes del loop
+     * en main.c) no volveria a ejecutarse y el party quedaria vacio. */
     { int _pi;
-      for (_pi = 0; _pi < g_party_count; _pi++)
-          if (g_party[_pi].face_pcx_buf) {
-              free(g_party[_pi].face_pcx_buf);
-              g_party[_pi].face_pcx_buf = NULL;
-          }
+      for (_pi = 0; _pi < g_party_count; _pi++) {
+          g_party[_pi].room_id[0] = '\0'; /* sin room = filtro no bloquea placement */
+          g_party[_pi].x         = 0;
+          g_party[_pi].y         = 0;
+          g_party[_pi].dir[0]    = '\0';
+          g_party[_pi].cur_anim  = 0;
+          /* id, place_fn, face_pcx_id y face_pcx_buf se conservan */
+      }
     }
-    g_party_count            = 0;
     g_party_popup_open       = 0;
     g_suppress_prot_reinject = 0;
     g_party_switch_pending[0]= '\0';
-    /* Estados persistentes de objetos */
+    /* Limpiar estado de sala: libera g_chars/g_objects y resetea contadores.
+     * Sin esto, el protagonista obsoleto obtiene had_protagonist=1 en engine_change_room,
+     * se reinyecta antes del on_room_enter y ese script lo omite (ya esta en sala),
+     * dejando al personaje en el entry point en vez de la posicion del script. */
+    _room_clear_state();
+    g_cur_room[0]  = '\0'; /* _party_save_all retorna temprano si cur_room esta vacia */
+    g_loading_save = 0;
+    /* Estados persistentes de objetos, visibilidad, posicion, exits */
     g_obj_state_persist_count = 0;
+    g_obj_vis_persist_count   = 0;
+    g_obj_pos_persist_count   = 0;
+    g_exit_state_count        = 0;
     /* Flags y atributos */
     g_flag_count = 0;
     g_attr_count = 0;
