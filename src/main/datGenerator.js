@@ -204,6 +204,15 @@ function writeBool(buf, offset, v) {
  * @returns {Buffer}
  */
 function buildDat(datType, blocks) {
+  // Spec AGEMKI_DAT_SPEC.md: la chunk table debe estar ordenada lex por
+  // (resType, id) para que el motor C pueda hacer binary search. Sin
+  // este sort, ciertos chunks no se localizan en runtime.
+  blocks = [...blocks].sort((a, b) =>
+    a.resType !== b.resType
+      ? a.resType - b.resType
+      : String(a.id).localeCompare(String(b.id))
+  )
+
   const numBlocks  = blocks.length
   const indexSize  = numBlocks * INDEX_ENTRY_SIZE
   const dataOffset = HEADER_SIZE + indexSize
@@ -640,20 +649,36 @@ function serializeScript(script) {
   const COND_TYPE = { flag: 0, has_object: 1, attr_compare: 2, var_compare: 3 }
   const OP_MAP = { '==': 0, '!=': 1, '<': 2, '>': 3, '<=': 4, '>=': 5 }
 
-  // Calculate size
+  // Calculate size — debe coincidir EXACTAMENTE con lo que escribe el writer
+  // de abajo. Si difiere, Buffer.alloc() asigna mal y writeStr8 lanza
+  // RangeError al pasar el límite. Antes de tocar esto, mira el writer.
   let size = sizeStr8(script.id) + sizeStr8(script.name || script.id)
   size += 1  // numTriggers
   for (const t of triggers) {
-    size += 1 + sizeStr8(t.param1 || '') + sizeStr8(t.param2 || '') + sizeStr8(t.param3 || '')
+    size += 1                                                                       // trigger type
+    size += sizeStr8(t.param1 || t.roomId || t.verbId || t.flag || t.attrName || t.sequenceId || '')
+    size += sizeStr8(t.param2 || t.objectId || t.nodeId || t.targetId || '')
+    size += sizeStr8(t.param3 || '')
+
     const conds = t.conditions || []
-    size += 1
+    size += 1                                                                       // numConditions
     for (const c of conds) {
-      size += 1 + sizeStr8(c.param1 || '') + sizeStr8(c.param2 || '') + sizeStr8(c.param3 || '') + 1
+      size += 1                                                                     // cond type
+      size += sizeStr8(c.flag || c.objectId || c.target || c.varName || '')
+      size += sizeStr8(c.value != null ? String(c.value) : '')
+      size += sizeStr8(c.attr || '')
+      size += 1                                                                     // operator
     }
+
     const instrs = t.instructions || []
-    size += 1
+    size += 1                                                                       // numInstructions
     for (const i of instrs) {
-      size += 1 + sizeStr8(i.p1||'') + sizeStr8(i.p2||'') + sizeStr8(i.p3||'') + sizeStr8(i.p4||'')
+      size += 1                                                                     // instruction type
+      const fields = Object.entries(i).filter(([k]) => k !== 'type')
+      size += sizeStr8(fields[0]?.[1] != null ? String(fields[0][1]) : '')
+      size += sizeStr8(fields[1]?.[1] != null ? String(fields[1][1]) : '')
+      size += sizeStr8(fields[2]?.[1] != null ? String(fields[2][1]) : '')
+      size += sizeStr8(fields[3]?.[1] != null ? String(fields[3][1]) : '')
     }
   }
 
