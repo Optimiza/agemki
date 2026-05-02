@@ -1642,7 +1642,7 @@ function generateMakefile(gameDir, buildDir, gameId, isDebug, watcomDir, useMidp
   const cellDefine = `-dWALKMAP_CELL_SIZE=${walkmapCellSize === 4 ? 4 : 8}`
   const flags = isDebug
     ? `-3 -mf -d2 -za99 -w3 -wcd202 -wcd102 -DDEBUG_MODE ${cellDefine}`
-    : `-3 -mf -O2 -za99 -w3 -wcd202 -wcd102 ${cellDefine}`
+    : `-3 -mf -ox -za99 -w3 -wcd202 -wcd102 ${cellDefine}`
   const bd = buildDir.split('/').join('\\\\')
   const wd = (watcomDir || '').replace(/\\/g, '\\\\')
   const watcomH   = wd ? wd + '\\\\H'      : '$(%WATCOM%)\\\\H'
