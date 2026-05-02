@@ -85,3 +85,87 @@ wlink system dos4gw file { archivo.obj engine.obj ... } name GAME.exe
 
 ## Checklist Código C
 - [ ] Compatible `wcc386 -bt=dos` · Respeta 8MB · Chain ISR (no reemplazar) · I/O no bloqueante · Prefijos `g_*`/`engine_*` · Comentarios explican hw
+
+---
+
+## Workflow TDD (obligatorio antes de commitear cambios importantes)
+
+Hay una suite de tests en `tests/` y goldens del codegen en `goldens/`.
+El hook `.claude/hooks/run-tests-on-edit.sh` corre los tests del área
+editada en cada `Edit/Write` automáticamente — es la **primera red de
+seguridad** mientras editas.
+
+Como trabajas solo en `main` sin PRs, la segunda red es manual:
+ejecutar `npm test` antes de commitear cambios importantes. Esa es la
+última oportunidad para mantener `main` verde.
+
+### Flujo de trabajo
+
+1. **Antes de tocar codegen JS o motor C:** `npm test` debe pasar.
+2. Reproduce el bug o documenta el cambio con un test que falle (en
+   `tests/unit/stores/` para stores, `tests/golden/` para codegen).
+3. Implementa hasta que pase.
+4. **Si el cambio modifica salida determinística** (`.DAT`, `agemki_dat.h`,
+   `main.c`):
+   - Ejecuta `/golden-update` (skill) y revisa `git diff --stat goldens/`
+     antes de stagear.
+   - Cada cambio en `goldens/` requiere mensaje de commit con el porqué
+     explícito (no el qué — el diff lo dice solo).
+5. **Antes de commitear:** `npm test` final. Mantén `main` verde.
+
+### Comandos rápidos
+
+```bash
+npm test                  # corre toda la suite en ~7s
+npm run test:watch        # vitest en modo watch
+npm run goldens:update    # regenera goldens y muestra diff
+node tests/fixtures/builder.mjs   # regenera los fixtures binarios
+```
+
+### Pre-commit hook opcional (recomendado)
+
+Si quieres que git bloquee commits con tests rojos sin tener que acordarte
+manualmente, instala un hook local (no se commitea, vive en `.git/hooks/`):
+
+```bash
+cat > .git/hooks/pre-commit <<'EOF'
+#!/bin/sh
+npm test --silent
+EOF
+chmod +x .git/hooks/pre-commit
+```
+
+Saltable puntualmente con `git commit --no-verify` cuando quieras
+commitear WIP a medias.
+
+### Convención de idioma (mandatorio en repo)
+
+Todo lo que entra al repo va en **español**: docs, READMEs, comentarios
+in-source y mensajes de commit. Excepciones: identificadores de código y
+nombres de comandos shell (pueden quedar en inglés). Detalle en
+`tests/README.md` (sección "Convención de idioma").
+
+### Mensajes de commit como única narrativa
+
+Trabajando solo sin PRs, el `git log` es la única documentación
+posterior del porqué de cada cambio. Cuida los mensajes: una línea
+resumen + cuerpo con la motivación (no el qué — el diff lo dice solo).
+
+### Bugs documentados
+
+Cualquier hallazgo durante el trabajo se anota en `tests/FINDINGS.md`
+con severidad, reproducción, impacto y fix sugerido. Es donde mirar
+si tropiezas con algo raro en el codegen o el build.
+
+### Skills de Claude Code disponibles
+
+- **`/tdd-feature`** — pídeselo al agente cuando quieras añadir una
+  feature nueva en JS (serializador del codegen, acción de store,
+  handler IPC o helper puro). El skill aplica TDD estricto: escribe
+  tests primero, los ejecuta para confirmar rojo, implementa lo mínimo
+  para que pasen, propone commit message. Detalle en
+  [`.claude/skills/tdd-feature/SKILL.md`](.claude/skills/tdd-feature/SKILL.md).
+- **`/golden-update`** — invocable cuando un cambio en codegen JS altera
+  los bytes generados intencionalmente. Regenera goldens, muestra el
+  diff y espera tu confirmación antes de stagear. Nunca auto-commitea.
+  Detalle en [`.claude/skills/golden-update/SKILL.md`](.claude/skills/golden-update/SKILL.md).
