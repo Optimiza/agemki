@@ -1,0 +1,76 @@
+{
+  "id": "room_001",
+  "name": "taberna",
+  "backgroundFilePath": "BG_001.PCX",
+  "backgroundSize": {
+    "w": 320,
+    "h": 144
+  },
+  "scroll": {
+    "enabled": false
+  },
+  "exits": [],
+  "entries": [
+    {
+      "id": "entry_default",
+      "x": 160,
+      "y": 100
+    }
+  ],
+  "objects": [
+    {
+      "id": "inst_obj_key_001",
+      "objectId": "obj_key",
+      "x": 120,
+      "y": 110
+    }
+  ],
+  "characters": [
+    {
+      "id": "cinst_hero_001",
+      "charId": "char_hero",
+      "x": 80,
+      "y": 110
+    }
+  ],
+  "walkmaps": [
+    {
+      "id": "wm_default",
+      "shapes": [
+        {
+          "type": "rect",
+          "points": [
+            {
+              "x": 0,
+              "y": 80
+            },
+            {
+              "x": 320,
+              "y": 144
+            }
+          ]
+        },
+        {
+          "type": "polygon",
+          "points": [
+            {
+              "x": 50,
+              "y": 90
+            },
+            {
+              "x": 100,
+              "y": 90
+            },
+            {
+              "x": 75,
+              "y": 130
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "audio": {
+    "midi": "MUS_INTRO"
+  }
+}

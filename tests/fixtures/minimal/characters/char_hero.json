@@ -1,0 +1,18 @@
+{
+  "id": "char_hero",
+  "name": "Héroe",
+  "isProtagonist": true,
+  "walkSpeed": 2,
+  "dialogueId": "dlg_intro",
+  "animations": [
+    {
+      "id": "anim_idle",
+      "name": "Idle",
+      "pcxFile": "SPR_HERO.PCX",
+      "frameWidth": 16,
+      "frameCount": 1,
+      "fps": 8,
+      "loop": true
+    }
+  ]
+}

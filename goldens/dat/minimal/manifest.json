@@ -1,0 +1,30 @@
+{
+  "SCRIPTS.DAT": {
+    "sha256": "1a83b87057d2866a1aeea591803dfff5212588c01ba7b0a5aca5b02528f95aea",
+    "size": 2145,
+    "numBlocks": 10,
+    "magic": "AGMK",
+    "version": 1
+  },
+  "GRAPHICS.DAT": {
+    "sha256": "d3a1dba7bc738f9c80aed67f4a3f198dcd5675e1332525c7a1b6f2dee84cd6c6",
+    "size": 3501,
+    "numBlocks": 3,
+    "magic": "AGMK",
+    "version": 1
+  },
+  "AUDIO.DAT": {
+    "sha256": "dd9d50de0b6ece878914569199b909d3ea96615f482c589358eb02c6750a3680",
+    "size": 1300,
+    "numBlocks": 2,
+    "magic": "AGMK",
+    "version": 1
+  },
+  "FONTS.DAT": {
+    "sha256": "25d2e9bd8358876ddf405c581a5bf3f8815deea6d7c1bf9e6bee1a36678fa354",
+    "size": 25894,
+    "numBlocks": 3,
+    "magic": "AGMK",
+    "version": 1
+  }
+}
