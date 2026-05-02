@@ -1,0 +1,22 @@
+{
+  "id": "seq_intro",
+  "name": "Intro sequence",
+  "steps": [
+    {
+      "type": "load_room",
+      "roomId": "room_001"
+    },
+    {
+      "type": "show_text",
+      "blocking": true,
+      "texts": {
+        "es": "Bienvenido",
+        "en": "Welcome"
+      }
+    },
+    {
+      "type": "wait",
+      "ms": 500
+    }
+  ]
+}

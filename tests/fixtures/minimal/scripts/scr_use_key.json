@@ -1,0 +1,13 @@
+{
+  "id": "scr_use_key",
+  "name": "Usar llave",
+  "triggers": [
+    {
+      "type": "verb_object",
+      "param1": "vrb_use",
+      "param2": "obj_key",
+      "conditions": [],
+      "instructions": []
+    }
+  ]
+}

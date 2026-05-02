@@ -2,7 +2,10 @@
 node_modules/
 
 # Build / output
-.claude
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+!.claude/skills/
 .vscode
 mcp-servers/
 documentation/
@@ -16,6 +19,13 @@ build/
 *.map
 *.dat
 game_config.h
+
+# Excepción: goldens binarios sí entran al repo (DAT, EXE, BMP de referencia)
+!goldens/**
+
+# Test runners (host)
+coverage/
+tmp/
 
 # Logs de compilación
 build/build.log

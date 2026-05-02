@@ -1,0 +1,33 @@
+{
+  "id": "vs_default",
+  "name": "Default Verbs",
+  "verbs": [
+    {
+      "id": "vrb_walk",
+      "label": "Ir a",
+      "isMovement": true,
+      "screenX": 0,
+      "screenY": 0,
+      "normalColor": 15,
+      "hoverColor": 14
+    },
+    {
+      "id": "vrb_use",
+      "label": "Usar",
+      "approachObject": true,
+      "screenX": 0,
+      "screenY": 10,
+      "normalColor": 15,
+      "hoverColor": 14
+    },
+    {
+      "id": "vrb_pick",
+      "label": "Coger",
+      "isPickup": true,
+      "screenX": 0,
+      "screenY": 20,
+      "normalColor": 15,
+      "hoverColor": 14
+    }
+  ]
+}

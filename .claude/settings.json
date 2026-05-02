@@ -1,0 +1,26 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm test*)",
+      "Bash(npm run goldens:update*)",
+      "Bash(node tests/fixtures/builder.mjs)",
+      "Bash(./scripts/dosbox-build.sh*)",
+      "Bash(./scripts/dosbox-run.sh*)",
+      "Bash(./scripts/verify_goldens.sh*)",
+      "Bash(./scripts/collect_goldens.sh*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/run-tests-on-edit.sh"
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "id": "obj_key",
+  "name": "Llave",
+  "description": "Una llave oxidada.",
+  "isPickable": true,
+  "isUsable": true,
+  "isVisible": true,
+  "spriteFile": "OBJ_KEY.PCX",
+  "activeStateId": "st_default",
+  "states": [
+    {
+      "id": "st_default",
+      "spriteFile": "OBJ_KEY.PCX"
+    }
+  ],
+  "verbOverrides": [
+    {
+      "verbId": "vrb_use",
+      "scriptId": "scr_use_key"
+    }
+  ],
+  "defaultScript": ""
+}

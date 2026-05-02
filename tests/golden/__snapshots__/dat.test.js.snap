@@ -1,0 +1,9 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`codegen .DAT golden — fixture "minimal" > preview hex de la cabecera estable (primeros 16 bytes) > AUDIO.DAT:header 1`] = `"41474D4B020102001000000070000000"`;
+
+exports[`codegen .DAT golden — fixture "minimal" > preview hex de la cabecera estable (primeros 16 bytes) > FONTS.DAT:header 1`] = `"41474D4B0301030010000000A0000000"`;
+
+exports[`codegen .DAT golden — fixture "minimal" > preview hex de la cabecera estable (primeros 16 bytes) > GRAPHICS.DAT:header 1`] = `"41474D4B0001030010000000A0000000"`;
+
+exports[`codegen .DAT golden — fixture "minimal" > preview hex de la cabecera estable (primeros 16 bytes) > SCRIPTS.DAT:header 1`] = `"41474D4B01010A0010000000F0010000"`;

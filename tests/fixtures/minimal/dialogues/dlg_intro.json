@@ -1,0 +1,48 @@
+{
+  "id": "dlg_intro",
+  "name": "Diálogo intro",
+  "actorId": "char_hero",
+  "nodes": [
+    {
+      "id": "n_start",
+      "type": "start",
+      "outputs": [
+        {
+          "targetNodeId": "n_line_1"
+        }
+      ]
+    },
+    {
+      "id": "n_line_1",
+      "type": "line",
+      "data": {
+        "text": "Hola, mundo."
+      },
+      "outputs": [
+        {
+          "targetNodeId": "n_choice_1"
+        }
+      ]
+    },
+    {
+      "id": "n_choice_1",
+      "type": "choice",
+      "outputs": [
+        {
+          "label": "Adiós",
+          "targetNodeId": "n_end"
+        },
+        {
+          "label": "Más",
+          "targetNodeId": "n_line_1",
+          "condFlag": "has_seen_intro",
+          "condValue": false
+        }
+      ]
+    },
+    {
+      "id": "n_end",
+      "type": "end"
+    }
+  ]
+}
