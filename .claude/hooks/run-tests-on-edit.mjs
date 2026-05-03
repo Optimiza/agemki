@@ -79,12 +79,11 @@ if (/\/src\/main\/(datGenerator|sfxGenerator|fontGenerator|index)\.js$/.test(nor
   area = 'fixtures+helpers'
   filter = 'tests/'
 } else if (/\/resources\/engine\/[^/]+\.[ch]$/.test(norm)) {
-  // Phase 3a: motor host. No implementado todavía.
-  const makefile = join(REPO_ROOT, 'tests', 'engine_host', 'Makefile')
-  if (existsSync(makefile)) {
-    runEngineHost()
-  }
-  process.exit(0)
+  // Edit en motor C → tests del motor host (drift + crc32 + futuros).
+  // El test de drift verifica que las copias en tests/engine_host/lib/
+  // siguen byte-exact al motor; si no, te avisa.
+  area = 'engine-host'
+  filter = 'tests/golden/engine-host.test.js'
 } else {
   // Path no relevante para tests
   process.exit(0)
@@ -109,20 +108,3 @@ try {
 }
 
 process.exit(0)
-
-// ── Phase 3a placeholder ──────────────────────────────────────────────────────
-function runEngineHost() {
-  try {
-    execSync('make -C tests/engine_host run', {
-      cwd: REPO_ROOT,
-      stdio: ['ignore', 'pipe', 'pipe'],
-      encoding: 'utf8',
-    })
-  } catch (err) {
-    const stdout = err.stdout?.toString('utf8') || ''
-    const stderr = err.stderr?.toString('utf8') || ''
-    const combined = (stdout + stderr).split('\n').slice(-20).join('\n')
-    process.stderr.write('[hook] engine host tests FAIL:\n')
-    process.stderr.write(combined + '\n')
-  }
-}

@@ -43,6 +43,24 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: npm
 
+      # clang viene preinstalado en macos-latest (Xcode CLT). Para Windows
+      # hay que añadirlo: GitHub runners traen LLVM en C:\Program Files\LLVM\,
+      # solo necesita estar en PATH. choco install llvm es alternativa.
+      - name: Setup clang (Windows only)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $llvm = 'C:\Program Files\LLVM\bin'
+          if (Test-Path $llvm) {
+            echo $llvm | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+            Write-Host "LLVM found at $llvm"
+          } else {
+            choco install llvm --no-progress -y
+          }
+
+      - name: Verify clang available
+        run: clang --version
+
       - name: Install deps
         run: npm ci
 

@@ -1,0 +1,14 @@
+---
+triple:          'x86_64-apple-darwin'
+binary-path:     '/Users/marcos/SynologyDrive/Code/agemki/tests/engine_host/runner'
+relocations:
+  - { offset: 0x26, size: 0x8, addend: 0x0, symName: _ag_test_crc32, symObjAddr: 0x0, symBinAddr: 0x100000AF0, symSize: 0x20 }
+  - { offset: 0x33, size: 0x8, addend: 0x0, symName: __sfx_crc32, symObjAddr: 0x20, symBinAddr: 0x100000B10, symSize: 0x122 }
+  - { offset: 0x58, size: 0x8, addend: 0x0, symName: __sfx_crc32.tbl, symObjAddr: 0x780, symBinAddr: 0x100002000, symSize: 0x0 }
+  - { offset: 0x6D, size: 0x8, addend: 0x0, symName: __sfx_crc32.tbl_rdy, symObjAddr: 0xF80, symBinAddr: 0x100002800, symSize: 0x0 }
+  - { offset: 0xD8, size: 0x8, addend: 0x0, symName: _ag_test_crc32, symObjAddr: 0x0, symBinAddr: 0x100000AF0, symSize: 0x20 }
+  - { offset: 0x137, size: 0x8, addend: 0x0, symName: _main, symObjAddr: 0x0, symBinAddr: 0x100000C40, symSize: 0xF0 }
+  - { offset: 0x152, size: 0x8, addend: 0x0, symName: _main, symObjAddr: 0x0, symBinAddr: 0x100000C40, symSize: 0xF0 }
+  - { offset: 0x196, size: 0x8, addend: 0x0, symName: _test_crc32, symObjAddr: 0xF0, symBinAddr: 0x100000D30, symSize: 0x80 }
+  - { offset: 0x1DA, size: 0x8, addend: 0x0, symName: _test_crc32_batch, symObjAddr: 0x170, symBinAddr: 0x100000DB0, symSize: 0x149 }
+...

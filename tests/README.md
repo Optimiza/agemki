@@ -185,7 +185,12 @@ agemki/
 │   │   ├── dat.test.js          codegen .DAT byte-equal + estructura semántica
 │   │   └── __snapshots__/       snapshots vitest (preview hex de cabeceras)
 │   │
-│   └── engine_host/        ← (futuro Phase 3a) Makefile + runner C compilado con clang
+│   └── engine_host/        ← Phase 3a — runner C compilado con clang en host
+      ├── lib/crc32.c           copia byte-exact de _sfx_crc32 del motor
+      ├── include/ag_test.h     header compartido del runner
+      ├── runner.c              entrypoint con dispatcher de tests
+      ├── build.mjs             compila con clang (cross-platform mac/win)
+      └── runner / runner.exe   binario generado (gitignored)
 │
 ├── goldens/                ← outputs esperados (entran al repo, !goldens/** en .gitignore)
 │   ├── dat/
@@ -229,6 +234,29 @@ Smoke de los helpers de testing:
 - `decodeDat` rechaza magic inválido.
 - `decodeDat` parsea cabecera + index entry de un fichero AGMK construido a mano.
 - Constantes (`MAGIC`, `HEADER_SIZE`, `INDEX_ENTRY_SIZE`) coherentes con la spec.
+
+### `tests/golden/engine-host.test.js` (22 tests, Phase 3a)
+
+Tests del **subset portable del motor C** compilado con clang en host.
+Primer test: CRC32 (`_sfx_crc32` del motor) — algoritmo crítico porque
+el motor usa este hash para binary search en el TOC de SFX.DAT. Si
+difiere del CRC32 del codegen JS (sfxGenerator.js / datGenerator.js),
+los chunks no se encuentran en runtime.
+
+Cubre:
+- **Drift detection**: compara byte-a-byte la copia en
+  `tests/engine_host/lib/crc32.c` con la función `_sfx_crc32` viva en
+  `resources/engine/agemki_audio.c`. Si Javi cambia la del motor, el
+  test rojo te avisa para sincronizar.
+- **Coherencia con JS**: 16 IDs reales (room_001, char_hero, etc.),
+  string vacío, batch de 100 ids, casos con espacios/mayúsculas, y
+  todos los chars ASCII imprimibles (cubre la tabla CRC entera, índices
+  0x20-0x7E).
+
+Si clang no está disponible (Xcode CLT en mac, LLVM en win, apt en
+linux), el bloque de tests dependientes se **skipea** automáticamente
+y el suite sigue verde. El drift test SÍ se ejecuta siempre (no
+requiere clang).
 
 ### `tests/golden/dat.test.js` (26 tests)
 

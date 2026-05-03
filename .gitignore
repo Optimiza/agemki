@@ -27,6 +27,13 @@ game_config.h
 coverage/
 tmp/
 
+# Artefactos de build del motor host (clang). Se regeneran con
+# `node tests/engine_host/build.mjs` en cada cambio de fuente.
+tests/engine_host/runner
+tests/engine_host/runner.exe
+tests/engine_host/*.o
+tests/engine_host/*.obj
+
 # Logs de compilación
 build/build.log
 build/watcom.log
