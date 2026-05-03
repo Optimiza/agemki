@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": ".claude/hooks/run-tests-on-edit.sh"
+            "command": "node .claude/hooks/run-tests-on-edit.mjs"
           }
         ]
       }

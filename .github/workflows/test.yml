@@ -1,0 +1,64 @@
+name: tests
+
+# Corre la suite de tests JS en macOS y Windows en cada push y pull request.
+# El motor C (Phase 3) queda fuera de CI por diseño: requiere DOSBox-X / Watcom
+# y los runners gratis de GitHub Actions no los tienen configurados.
+
+on:
+  push:
+    branches: [main, 'marcos/**']
+  pull_request:
+    branches: [main]
+  workflow_dispatch: {}
+
+jobs:
+  test:
+    name: tests (${{ matrix.os }} / Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+        node: ['20', '22']
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        # core.autocrlf y line endings: el .gitattributes del repo manda;
+        # forzamos input para que Windows no convierta CRLF en archivos texto.
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Verify fixture builder is idempotente
+        # Si el builder produce bytes distintos en run-tras-run, los goldens
+        # se desincronizarían. Verificamos que regenerar los fixtures no rompe.
+        run: |
+          node tests/fixtures/builder.mjs
+          npm test
+
+      - name: Smoke test del hook PostToolUse
+        # Verifica que el hook Node funciona en este OS (sin tocar bash/sh).
+        # Editar un fichero irrelevante debe ser noop, edit en store ejecuta
+        # tests y devuelve exit 0 si verde.
+        shell: node {0}
+        run: |
+          import { execSync } from 'node:child_process'
+          import { resolve } from 'node:path'
+          const file = resolve('src/renderer/src/store/sceneStore.js')
+          const payload = JSON.stringify({ tool_name: 'Edit', tool_input: { file_path: file } })
+          execSync('node .claude/hooks/run-tests-on-edit.mjs', {
+            input: payload, stdio: ['pipe', 'inherit', 'inherit']
+          })
+          console.log('hook OK en', process.platform)

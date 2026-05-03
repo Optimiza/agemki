@@ -125,8 +125,9 @@ node tests/fixtures/builder.mjs   # regenera los fixtures binarios
 ### Pre-commit hook opcional (recomendado)
 
 Si quieres que git bloquee commits con tests rojos sin tener que acordarte
-manualmente, instala un hook local (no se commitea, vive en `.git/hooks/`):
+manualmente, instala un hook local (no se commitea, vive en `.git/hooks/`).
 
+**macOS / Linux**:
 ```bash
 cat > .git/hooks/pre-commit <<'EOF'
 #!/bin/sh
@@ -135,8 +136,17 @@ EOF
 chmod +x .git/hooks/pre-commit
 ```
 
-Saltable puntualmente con `git commit --no-verify` cuando quieras
-commitear WIP a medias.
+**Windows (Git for Windows + PowerShell)**:
+```powershell
+@"
+#!/bin/sh
+npm test --silent
+"@ | Set-Content -Encoding ASCII -NoNewline .git/hooks/pre-commit
+```
+
+Git for Windows interpreta el shebang con su bash interno, no hace falta
+ningún `chmod`. Saltable con `git commit --no-verify` cuando quieras
+commitear WIP a medias, en cualquier OS.
 
 ### Convención de idioma (mandatorio en repo)
 

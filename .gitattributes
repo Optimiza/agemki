@@ -1,0 +1,46 @@
+# EOL normalizado a LF para todo el contenido textual del repo.
+# Esto evita que `core.autocrlf` en Windows convierta a CRLF y luego los tests
+# fallen por mismatch de línea en goldens, snapshots o JSON.
+* text=auto eol=lf
+
+# Forzar texto explícito en ficheros que algunos detectores pueden malinterpretar
+*.md            text eol=lf
+*.json          text eol=lf
+*.js            text eol=lf
+*.jsx           text eol=lf
+*.mjs           text eol=lf
+*.cjs           text eol=lf
+*.snap          text eol=lf
+*.sh            text eol=lf
+*.conf          text eol=lf
+*.yml           text eol=lf
+*.yaml          text eol=lf
+
+# ── Binarios: NO tocarles los bytes nunca ────────────────────────────────────
+# Goldens y fixtures binarios. Si Git los procesa como texto, los corrompe.
+*.DAT           binary
+*.dat           binary
+*.PCX           binary
+*.pcx           binary
+*.MID           binary
+*.mid           binary
+*.MIDI          binary
+*.midi          binary
+*.WAV           binary
+*.wav           binary
+*.IMA           binary
+*.ima           binary
+*.OBJ           binary
+*.obj           binary
+*.EXE           binary
+*.exe           binary
+*.BMP           binary
+*.bmp           binary
+*.PNG           binary
+*.png           binary
+*.PDF           binary
+*.pdf           binary
+*.OP2           binary
+*.op2           binary
+*.PAL           binary
+*.pal           binary

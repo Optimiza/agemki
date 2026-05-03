@@ -29,6 +29,43 @@ lógica observable rompa al menos un test**.
 
 ---
 
+## Cross-platform (macOS y Windows)
+
+La suite está diseñada para correr **idéntica en macOS y Windows 11**.
+Cero diferencia funcional, cero ramas en el código.
+
+| Componente | macOS | Windows 11 | Notas |
+|---|---|---|---|
+| `npm test` | ✓ | ✓ | Vitest puro Node, idéntico en ambos |
+| `npm run test:watch` | ✓ | ✓ | igual |
+| `npm run goldens:update` | ✓ | ✓ | igual |
+| `node tests/fixtures/builder.mjs` | ✓ | ✓ | usa `node:path`, separadores normalizados |
+| Hook `PostToolUse` | ✓ | ✓ | escrito en Node (`.mjs`), no bash |
+| Skills `/tdd-feature`, `/golden-update` | ✓ | ✓ | comandos universales (`npm`, `git`) |
+| Pre-commit hook opcional | ✓ | ✓ | bash en mac/Linux; Git for Windows tiene bash interno |
+| GitHub Actions (CI) | ✓ | ✓ | matrix `[macos-latest, windows-latest]` en `.github/workflows/test.yml` |
+
+Lo único platform-specific viene en **Phase 3** (motor C, todavía no
+montado): la cadena de build con Open Watcom es nativa en Windows y
+envuelta en DOSBox-X en macOS. Detalle en la sección
+[Pipeline DOSBox-X](#pipeline-dosbox-x-futuro-phase-3) y en el plan
+0001 (`.claude/plans/`).
+
+### `.gitattributes`
+
+Hay un `.gitattributes` en la raíz que normaliza EOL a `LF` para
+ficheros de texto (`.js`, `.json`, `.md`, `.snap`...) y marca como
+`binary` los assets binarios (`.PCX`, `.MID`, `.WAV`, `.DAT`, `.OBJ`,
+`.EXE`, `.BMP`...). Esto evita dos clases de bug:
+
+- Que `core.autocrlf=true` en Windows convierta los snapshots vitest
+  a CRLF y los tests fallen al comparar.
+- Que Git interprete un `.PCX` como texto y le cambie bytes (corrupting
+  el fixture).
+
+Si clonas el repo en Windows con `core.autocrlf=true`, los `.gitattributes`
+ganan: los binarios viajan intactos, los textos llegan en LF.
+
 ## Convención de idioma (mandatorio)
 
 Todo el contenido que entra al repo está en **español**: README, docs,
@@ -351,14 +388,18 @@ Claude Code modifica un fichero (`Edit`, `Write`, `MultiEdit`):
       "matcher": "Edit|Write|MultiEdit",
       "hooks": [{
         "type": "command",
-        "command": ".claude/hooks/run-tests-on-edit.sh"
+        "command": "node .claude/hooks/run-tests-on-edit.mjs"
       }]
     }]
   }
 }
 ```
 
-El hook `.claude/hooks/run-tests-on-edit.sh`:
+El hook está escrito en Node puro (no bash), así corre idéntico en
+macOS, Linux y Windows sin Git Bash ni WSL. Node es dependencia
+obligatoria del proyecto (`engines.node` en `package.json`).
+
+El hook `.claude/hooks/run-tests-on-edit.mjs`:
 
 | Path editado | Tests disparados |
 |---|---|
@@ -378,9 +419,16 @@ Reglas del hook:
 
 Si quieres ver lo que vería tu IDE al editar un store:
 
+**macOS / Linux**:
 ```bash
 echo '{"tool_name":"Edit","tool_input":{"file_path":"'$(pwd)'/src/renderer/src/store/sceneStore.js"}}' \
-  | .claude/hooks/run-tests-on-edit.sh
+  | node .claude/hooks/run-tests-on-edit.mjs
+```
+
+**Windows (PowerShell)**:
+```powershell
+'{"tool_name":"Edit","tool_input":{"file_path":"' + (Get-Location) + '/src/renderer/src/store/sceneStore.js"}}' `
+  | node .claude/hooks/run-tests-on-edit.mjs
 ```
 
 Sin output = OK. Si hubiera fallo, vería las últimas 20 líneas de vitest en stderr.
