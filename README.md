@@ -9,12 +9,14 @@ Stack: **Electron + React 18 + Zustand** (editor) · **C + Open Watcom** (motor 
 
 | Herramienta | Versión mínima | Notas |
 |---|---|---|
-| Node.js | 18 LTS | |
-| npm | 9+ | incluido con Node |
+| Node.js | 22 LTS | (24 también soportado) |
+| npm | 10+ | incluido con Node |
 | [Open Watcom](https://github.com/open-watcom/open-watcom-v2/releases/tag/Current-build) | 2.0 | solo para compilar el motor DOS |
 | [DOSBox-X](https://dosbox-x.com/) | cualquier reciente | `mpu401=intelligent` para audio MIDI |
 
 > El editor (Electron) no requiere Watcom. Solo es necesario para generar el `.EXE` del juego.
+
+**Plataformas**: editor y suite de tests funcionan idénticos en **Windows 11** y **macOS** (verificado en CI con matrix `[macos-latest, windows-latest] x Node [22, 24]`). Detalle en [`tests/README.md`](tests/README.md#cross-platform-macos-y-windows).
 
 ---
 
@@ -54,18 +56,22 @@ El instalador queda en `dist/`.
 
 ## Compilar el motor DOS
 
-Requiere Open Watcom instalado en `C:\WATCOM\`.
+Requiere Open Watcom v2 instalado.
+
+**Windows** (entorno principal): Open Watcom nativo en `C:\WATCOM\`. El panel Build del editor lo invoca directamente.
+
+**macOS**: Open Watcom v2 (la misma versión) ejecutado dentro de DOSBox-X. Produce binarios DOS bit-equivalentes a los de Windows. Útil para verificar y regenerar artefactos sin necesidad de Windows. *(Esta vía se monta como pipeline automatizada en una fase posterior — ver `.claude/plans/`.)*
 
 ```bash
-# Desde el panel Build del editor (recomendado)
+# Desde el panel Build del editor (recomendado, funciona igual en mac y win)
 # O manualmente:
 
-wcc386 -bt=dos -6r -ox -w=3 resources/engine/agemki_engine.c
-wcc386 -bt=dos -6r -ox -w=3 resources/engine/mididrv.c
-wcc386 -bt=dos -6r -ox -w=3 resources/engine/timer.c
+wcc386 -bt=dos -3 -mf -ox -za99 -w3 -wcd=202 -wcd=102 -dWALKMAP_CELL_SIZE=8 resources/engine/agemki_engine.c
+wcc386 -bt=dos -3 -mf -ox -za99 -w3 -wcd=202 -wcd=102 -dWALKMAP_CELL_SIZE=8 resources/engine/mididrv.c
+wcc386 -bt=dos -3 -mf -ox -za99 -w3 -wcd=202 -wcd=102 -dWALKMAP_CELL_SIZE=8 resources/engine/timer.c
 # ... resto de módulos
 
-wlink system dos4gw file { agemki_engine.obj mididrv.obj timer.obj ... } name game/GAME.EXE
+wlink system dos4g file { agemki_engine.obj mididrv.obj timer.obj ... } name game/GAME.EXE
 ```
 
 Los logs de compilación se generan en `build/build.log` y `build/watcom.log`.
@@ -99,8 +105,20 @@ agemki/
 │   └── renderer/       # UI React (editor visual)
 ├── resources/
 │   └── engine/         # motor C para DOS (wcc386)
+├── tests/              # suite de tests (vitest, 219 tests JS, ~7s)
+├── goldens/            # outputs binarios esperados del codegen (entran al repo)
 └── game/               # salida: GAME.EXE + GAME.DAT (generados, no en git)
 ```
+
+## Tests
+
+```bash
+npm test                  # corre los 219 tests JS, ~7s
+npm run test:watch        # vitest en modo watch
+npm run goldens:update    # regenera goldens tras cambios intencionales
+```
+
+Detalle completo (técnica, layout, troubleshooting, cómo añadir tests, workflow TDD para Claude Code) en [`tests/README.md`](tests/README.md).
 
 ---
 

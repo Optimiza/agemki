@@ -91,9 +91,14 @@ wlink system dos4gw file { archivo.obj engine.obj ... } name GAME.exe
 ## Workflow TDD (obligatorio antes de commitear cambios importantes)
 
 Hay una suite de tests en `tests/` y goldens del codegen en `goldens/`.
-El hook `.claude/hooks/run-tests-on-edit.sh` corre los tests del área
+El hook `.claude/hooks/run-tests-on-edit.mjs` corre los tests del área
 editada en cada `Edit/Write` automáticamente — es la **primera red de
 seguridad** mientras editas.
+
+**Cross-platform**: suite y hook funcionan idénticos en **Windows 11** y
+**macOS** (CI matrix con `[macos-latest, windows-latest] x Node [22, 24]`).
+El hook está escrito en Node, no bash; corre nativo en Windows sin Git Bash
+ni WSL. Detalle en [`tests/README.md`](tests/README.md#cross-platform-macos-y-windows).
 
 Como trabajas solo en `main` sin PRs, la segunda red es manual:
 ejecutar `npm test` antes de commitear cambios importantes. Esa es la

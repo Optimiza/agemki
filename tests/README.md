@@ -211,7 +211,7 @@ agemki/
 └── .claude/
     ├── settings.json            permissions + hook PostToolUse
     ├── hooks/
-    │   └── run-tests-on-edit.sh hook que dispara tests del área editada
+    │   └── run-tests-on-edit.mjs hook (Node, cross-platform) que dispara tests del área editada
     └── skills/
         └── golden-update/
             └── SKILL.md          flujo seguro para regenerar goldens
@@ -637,24 +637,33 @@ Los goldens del repo no coinciden con tu codegen actual. Posibles causas:
 
 Diagnóstico rápido:
 ```bash
-node --version              # debe estar en 20-22 LTS, ver package.json engines
+node --version              # debe estar en 22 LTS o 24, ver package.json engines
 git status
 git diff -- src/main/datGenerator.js src/main/sfxGenerator.js src/main/fontGenerator.js
 ```
 
 ### Los tests del hook no se disparan al editar
 
-Verifica que el hook está registrado y es ejecutable:
+Verifica que el hook está registrado:
 ```bash
-ls -la .claude/hooks/run-tests-on-edit.sh   # debe tener +x
-cat .claude/settings.json                    # debe tener el hook PostToolUse
+ls -la .claude/hooks/run-tests-on-edit.mjs   # debe existir
+cat .claude/settings.json                     # debe tener el hook PostToolUse
 ```
 
 Prueba el hook manualmente:
+
+**macOS / Linux**:
 ```bash
 echo '{"tool_name":"Edit","tool_input":{"file_path":"'$(pwd)'/src/renderer/src/store/sceneStore.js"}}' \
-  | .claude/hooks/run-tests-on-edit.sh
+  | node .claude/hooks/run-tests-on-edit.mjs
 echo "exit: $?"
+```
+
+**Windows (PowerShell)**:
+```powershell
+'{"tool_name":"Edit","tool_input":{"file_path":"' + (Get-Location) + '/src/renderer/src/store/sceneStore.js"}}' `
+  | node .claude/hooks/run-tests-on-edit.mjs
+$LASTEXITCODE
 ```
 
 ### `RangeError: The value of "offset" is out of range` en `serializeScript`
@@ -680,7 +689,7 @@ Es del código de producción, no de los tests. Polish a futuro: añadir
 ### Los tests del hook tardan demasiado en cada Edit
 
 Si edits triviales disparan toda la suite, revisa el matcher en
-`run-tests-on-edit.sh`. El hook está diseñado para correr SOLO los tests
+`run-tests-on-edit.mjs`. El hook está diseñado para correr SOLO los tests
 del área editada. Si sale > 3s, algo va mal.
 
 ---
