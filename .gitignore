@@ -33,9 +33,13 @@ tests/engine_host/runner
 tests/engine_host/runner.exe
 tests/engine_host/*.o
 tests/engine_host/*.obj
-tests/engine_host/*.dSYM/      # debug symbols dir generado por clang en mac
-tests/engine_host/*.pdb        # debug symbols Windows
-tests/engine_host/*.ilk        # incremental linker artifacts Windows
+# debug symbols dir generado por clang en mac (los comentarios inline NO son
+# válidos en .gitignore, van en su propia línea)
+tests/engine_host/*.dSYM/
+# debug symbols Windows
+tests/engine_host/*.pdb
+# incremental linker artifacts Windows
+tests/engine_host/*.ilk
 
 # Logs de compilación
 build/build.log
