@@ -1,6 +1,6 @@
 {
   "name": "agemki",
-  "version": "0.1.0",
+  "version": "0.7.0",
   "description": "ACHUS Game Engine Mark I (AGEMKI) — DOS adventure game engine and editor",
   "main": "out/main/index.js",
   "scripts": {
