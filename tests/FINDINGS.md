@@ -6,9 +6,12 @@ seguridad: cada vez que un test no encajaba con lo que esperaba, había
 que entender por qué — y a veces el "por qué" era un bug latente que
 nadie había disparado todavía.
 
-Cinco cosas en total. Cuatro tienen fix concreto (la mayoría de 1-3
-líneas). Una requiere una decisión tuya. Ninguna te bloquea hoy mismo;
-todas las descubrió la suite haciendo su trabajo.
+Cinco cosas en total: **cuatro bugs reales** (3 con fix incluido, 1 que
+requiere decisión tuya), y **un falso positivo (F-02)** que reporté como
+bug pero al verificarlo en Terminal nativa no era. Ninguna te bloquea
+hoy mismo; las verdaderas las descubrió la suite haciendo su trabajo, y
+la falsa la descubrí yo metiendo la pata — ambas cosas están aquí
+documentadas porque la honestidad importa más que la apariencia.
 
 Cada finding tiene:
 - **Resumen en cristiano** — qué pasa, sin tecnicismos.
@@ -28,7 +31,7 @@ Cada finding tiene:
 | ID | Severidad | Área | Estado | Fix |
 |----|-----------|------|--------|-----|
 | F-01 | Alta | Build (Watcom) | ✅ aplicado en commit `fix(dat,build)` | Sí, en este PR |
-| F-02 | Media | Build (Node) | ✅ aplicado vía `engines.node` en `package.json` | Sí, en este PR |
+| F-02 | ~~Media~~ ninguna | ~~Build (Node)~~ | ❌ **falso positivo** — descartado | No aplica (mi error de diagnóstico) |
 | F-03 | Media | Documentación | abierto | No — requiere decisión tuya |
 | F-04 | Alta | Codegen DAT | ✅ aplicado en commit `fix(dat,build)` | Sí, en este PR |
 | F-05 | Crítica | Codegen DAT | ✅ aplicado en commit `fix(dat,build)` | Sí, en este PR |
@@ -106,59 +109,73 @@ roto sin que nadie lo notara.
 
 ---
 
-## F-02 — Editor falla en arranque con Node 25 (Electron 33 incompat)
+## F-02 — Falso positivo (descartado tras verificación en Terminal nativa)
 
-**Severidad:** Media · **Estado:** ✅ aplicado · **Fix incluido:** Sí (en `package.json` de este PR)
+**Severidad:** ninguna · **Estado:** ❌ descartado · **Fix:** no aplica
 
-### Resumen en cristiano
+### Honestidad primero: yo (Claude) me equivoqué
 
-`npm run dev` peta al arrancar Electron si tienes Node 25+ instalado.
-Con Node 20-22 (LTS) funciona. `npm run build` sí compila siempre. La
-solución es decirle a `package.json` qué versiones de Node aceptamos
-para que `npm install` avise si la local no encaja.
+Reporté inicialmente que `npm run dev` rompía con
+`TypeError: Cannot read properties of undefined (reading 'whenReady')`
+y propuse pinear `engines.node` como fix. Lo documenté como bug del
+proyecto y lo metí en este mismo PR.
 
-Tú probablemente estás en LTS y no lo has visto. El siguiente
-contributor (o tú dentro de 6 meses con Node nuevo) sí lo verá.
+**Estaba mal**. Marcos verificó en su Terminal nativa de macOS y
+**el editor arranca sin problema, la app de Electron abre y se usa
+con normalidad**. El bug que yo veía es un falso positivo del entorno
+donde corro como Claude Code, no del repo.
 
-### Reproducción
+### Explicación técnica
 
-```
-$ node --version
-v25.9.0
-$ npm run dev
-...
-TypeError: Cannot read properties of undefined (reading 'whenReady')
-    at out/main/index.js:208
-```
+Cuando ejecuto `npm run dev` desde mi tool Bash, este lanza el comando
+en un sub-shell (`sh -c` / `zsh -c` no interactivo) que el sandbox de
+Claude Code envuelve para capturar stdout/stderr y aplicar permisos.
+`electron-vite` invoca a su vez el binario `electron` como sub-proceso,
+y dentro de ese proceso Electron carga `out/main/index.js`.
 
-`npm run build` sí compila. Solo el arranque del proceso Electron
-(`whenReady`) explota. Conocido en Electron 33 con Node ≥ 23.
+Algo en esa cadena de wrapping (probablemente cómo el sandbox
+intercepta stdio o el environment de variables) hace que el módulo
+nativo `electron` no se inyecte correctamente en el contexto del
+script main. El bundle resuelve `require('electron')` a algo
+incompleto (`electron.app` queda `undefined`) y al ejecutar
+`electron.app.whenReady()` se cae.
 
-### Impacto
+En tu Terminal nativa de macOS, el binario `electron` se invoca
+directamente sin esa capa de wrapping y el módulo se inyecta
+correctamente. Por eso el editor arranca como debe.
 
-Cualquier contributor con Node moderno no puede ejecutar el editor en dev
-mode. La build de producción y el packaging sí funcionan.
+Es el mismo error que dispararía cualquier sandbox que intercepta
+stdio o reescriba `argv0` (Docker mal configurado, Snap, ciertos
+launchers). Pero **no es bug del proyecto** — es del entorno desde el
+que yo lanzo el comando.
 
-### Fix
+### Lo que dejamos en el PR a pesar de ser falso positivo
 
-`package.json`:
-```json
-"engines": {
-  "node": ">=22.0.0"
-}
-```
+`engines.node: ">=22.0.0"` se queda en `package.json`, pero la
+justificación cambia:
 
-Node 22 es la LTS activa; Node 20 ya entró en mantenimiento en abril
-2026 y deja de tener soporte oficial en septiembre. Pin a `>=22.0.0`
-sin límite superior para no bloquear actualizaciones futuras.
+- ❌ NO es fix de F-02 (no había bug que arreglar).
+- ✅ SÍ es saneamiento: Node 20 LTS terminó en abril 2026 (ya en
+  mantenimiento, EOL septiembre 2026); Node 22 es LTS activa hasta
+  abril 2027. Pin a `>=22.0.0` ayuda a contributors a saber qué
+  versiones se prueban en CI sin bloquear futuras LTS (24 cuando
+  llegue).
 
-`npm install` avisa si la versión local no encaja. Commit propuesto:
-`chore: pin node engine to LTS range`.
+### Lección
+
+La conclusión de "Electron 33 incompat con Node ≥ 23" la generé sin
+verificar fuera del sandbox. Carmack-style, debí probarlo en al
+menos dos entornos (Terminal nativa + sandbox) antes de declarar
+diagnóstico.
+
+Para futuros bugs reportados por mí: **si solo lo veo desde la tool
+Bash, no es un bug confirmado**. Hay que verificar en Terminal
+nativa o CI antes de incluirlo en findings.
 
 ### Para ti, ahora mismo
 
-Cero urgencia si tu Node local está dentro del rango. Aplícalo cuando
-toque para que el repo sea autodefensivo.
+Nada que hacer. El editor te arranca. Si te interesa, mantienes el
+pin Node como saneamiento; si te molesta, lo quitas y no pasa nada.
 
 ---
 
@@ -480,12 +497,12 @@ vez en DOSBox-X, y si todo funciona ya estás cubierto.
 
 ## Plan de commits sugerido
 
-Estos hallazgos sugieren cinco commits separables. El orden recomendado:
+Estos hallazgos sugieren cuatro commits separables. El orden recomendado:
 
 1. **`fix(build): -O2 -> -ox in release flags`** (F-01) — 1 línea, urgente.
 2. **`fix(dat): sort chunks before writing index`** (F-05) — 3 líneas, runtime crítico.
 3. **`fix(dat): align serializeScript size-calc with writer`** (F-04) — ~10 líneas.
-4. **`chore: pin node engine to LTS range`** (F-02) — 3 líneas.
+4. **`chore: pin node engine to LTS`** (saneamiento, ya aplicado en este PR; **NO** es fix de F-02 — F-02 era falso positivo).
 5. **`feat: test suite + golden files + TDD harness`** — el resto del trabajo.
 
 Como trabajas solo en `main` sin PRs, puedes:
