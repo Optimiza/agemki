@@ -33,6 +33,9 @@ tests/engine_host/runner
 tests/engine_host/runner.exe
 tests/engine_host/*.o
 tests/engine_host/*.obj
+tests/engine_host/*.dSYM/      # debug symbols dir generado por clang en mac
+tests/engine_host/*.pdb        # debug symbols Windows
+tests/engine_host/*.ilk        # incremental linker artifacts Windows
 
 # Logs de compilación
 build/build.log
