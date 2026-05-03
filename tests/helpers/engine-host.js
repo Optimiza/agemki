@@ -63,22 +63,27 @@ export function runnerCrc32Batch(inputs) {
 
 /**
  * Ejecuta `runner pcx_decode <pcxFile>` y devuelve la imagen decodificada.
+ *
+ * El runner emite "W H N\n<hex de N bytes>\n". El hex es para evitar
+ * la translation LF→CRLF de stdout en Windows que corrompía bytes 0x0A.
+ *
  * @param {string} pcxFile  ruta absoluta al fichero .PCX
  * @returns {{ width: number, height: number, pixels: Buffer }}
  */
 export function runnerPcxDecode(pcxFile) {
-  // El runner emite "W H N\n" + N bytes raw del buffer.
-  const out = execFileSync(RUNNER_PATH, ['pcx_decode', pcxFile], { encoding: null })
-  // Buscar el primer \n para separar header del payload.
-  const nlIdx = out.indexOf(0x0A)
-  if (nlIdx < 0) throw new Error('runner pcx_decode: stdout sin newline')
-  const header = out.slice(0, nlIdx).toString('ascii')
-  const [w, h, n] = header.trim().split(/\s+/).map(Number)
-  const pixels = out.slice(nlIdx + 1, nlIdx + 1 + n)
-  if (pixels.length !== n) {
-    throw new Error(`runner pcx_decode: payload corto (got ${pixels.length}, expected ${n})`)
+  const out = execFileSync(RUNNER_PATH, ['pcx_decode', pcxFile], { encoding: 'utf8' })
+  const lines = out.split('\n')
+  if (lines.length < 2) throw new Error('runner pcx_decode: salida con menos de 2 líneas')
+  const [w, h, n] = lines[0].trim().split(/\s+/).map(Number)
+  const hex = lines[1].trim()
+  if (hex.length !== n * 2) {
+    throw new Error(`runner pcx_decode: hex length ${hex.length} != 2*N (${2*n})`)
   }
-  return { width: w, height: h, pixels: Buffer.from(pixels) }
+  const pixels = Buffer.from(hex, 'hex')
+  if (pixels.length !== n) {
+    throw new Error(`runner pcx_decode: pixels decoded ${pixels.length} != ${n}`)
+  }
+  return { width: w, height: h, pixels }
 }
 
 /**

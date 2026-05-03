@@ -43,8 +43,16 @@ static int test_crc32_batch(void) {
 
 /* Imprime el buffer decodificado en stdout en formato:
  *   <width> <height> <num_bytes>\n
- *   <bytes raw binario>
- * El test JS calcula el SHA-256 sobre los bytes raw para comparar con golden.
+ *   <hex de los N bytes>\n
+ *
+ * Por qué hex y no raw binarios: en Windows, stdout tiene LF→CRLF
+ * translation por defecto, y un byte 0x0A en el buffer se convierte
+ * a 0x0D 0x0A al salir, corrompiendo el SHA-256. El hex evita ese
+ * issue completamente y funciona idéntico cross-platform.
+ *
+ * Coste: ~2x bytes en stdout (cada byte = 2 chars hex), pero los
+ * fixtures son pequeños (32x16=512 hasta 144*16=2304 bytes), así
+ * que es despreciable.
  */
 static int test_pcx_decode(int argc, char** argv) {
     if (argc < 3) {
@@ -71,9 +79,12 @@ static int test_pcx_decode(int argc, char** argv) {
 
     uint32_t bytes = (uint32_t)w * (uint32_t)h;
     fprintf(stdout, "%u %u %u\n", (unsigned)w, (unsigned)h, (unsigned)bytes);
-    fflush(stdout);
-    /* Bytes raw del buffer (longitud w*h). El test JS los lee del stdout. */
-    fwrite(dst, 1, bytes, stdout);
+    /* Emitir como hex (2 chars por byte). Evita LF→CRLF en Windows. */
+    {
+        uint32_t i;
+        for (i = 0; i < bytes; i++) fprintf(stdout, "%02x", dst[i]);
+        fputc('\n', stdout);
+    }
     free(dst);
     return 0;
 }
