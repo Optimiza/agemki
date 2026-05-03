@@ -11,6 +11,12 @@ on:
     branches: [main]
   workflow_dispatch: {}
 
+# Opt-in a Node 24 para los runtimes internos de las actions (actions/checkout,
+# actions/setup-node). A partir de 2026-06-02 sera el default; nos adelantamos
+# para que el log no muestre warnings de deprecation de Node 20.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
 jobs:
   test:
     name: tests (${{ matrix.os }} / Node ${{ matrix.node }})
@@ -19,7 +25,9 @@ jobs:
       fail-fast: false
       matrix:
         os: [macos-latest, windows-latest]
-        node: ['20', '22']
+        # Node 20 LTS terminó en 2026-04, ya en maintenance.
+        # Probamos contra LTS activa (22) y la rama actual (24, próxima LTS).
+        node: ['22', '24']
 
     steps:
       - name: Checkout

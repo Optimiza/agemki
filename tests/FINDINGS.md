@@ -144,9 +144,13 @@ mode. La build de producción y el packaging sí funcionan.
 `package.json`:
 ```json
 "engines": {
-  "node": ">=20.0.0 <23.0.0"
+  "node": ">=22.0.0"
 }
 ```
+
+Node 22 es la LTS activa; Node 20 ya entró en mantenimiento en abril
+2026 y deja de tener soporte oficial en septiembre. Pin a `>=22.0.0`
+sin límite superior para no bloquear actualizaciones futuras.
 
 `npm install` avisa si la versión local no encaja. Commit propuesto:
 `chore: pin node engine to LTS range`.

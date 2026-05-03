@@ -4,7 +4,7 @@
   "description": "ACHUS Game Engine Mark I (AGEMKI) — DOS adventure game engine and editor",
   "main": "out/main/index.js",
   "engines": {
-    "node": ">=20.0.0 <23.0.0"
+    "node": ">=22.0.0"
   },
   "scripts": {
     "dev": "electron-vite dev",
