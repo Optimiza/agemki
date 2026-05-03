@@ -35,6 +35,7 @@ Cada finding tiene:
 | F-03 | Media | Documentación | abierto | No — requiere decisión tuya |
 | F-04 | Alta | Codegen DAT | ✅ aplicado en commit `fix(dat,build)` | Sí, en este PR |
 | F-05 | Crítica | Codegen DAT | ✅ aplicado en commit `fix(dat,build)` | Sí, en este PR |
+| F-06 | Media | Motor (walkmap) | abierto | No — requiere tu decisión sobre walkmaps no-rectangulares |
 
 Severidad:
 - **Crítica**: el motor falla silenciosamente en runtime.
@@ -492,6 +493,95 @@ Este es **el más importante** de los cinco. El fix es de 3 líneas. La
 para revisar el motor primero (ver "Riesgo del fix"). Mi recomendación:
 aplica el fix de `buildDat`, regenera goldens, ejecuta el juego una
 vez en DOSBox-X, y si todo funciona ya estás cubierto.
+
+---
+
+## F-06 — `engine_walkmap_add_poly` aproxima polígonos a su bounding box
+
+**Severidad:** Media · **Estado:** abierto · **Fix incluido:** No (requiere tu decisión)
+
+### Resumen en cristiano
+
+Tu editor permite definir walkmaps con polígonos arbitrarios (convexos,
+cóncavos, triángulos, formas raras). Pero el motor C, al cargarlos,
+los reduce a su **bounding box rectangular**. El polígono visualmente
+verde en el editor puede tener mucha más área transitable que la zona
+real donde el personaje puede caminar en runtime.
+
+Esto no es bug del motor en sí — es una decisión documentada con el
+comentario `/* Aproximacion: bounding box del poligono como rect
+navegable */` en `agemki_engine.c:2179`. Pero **el editor no avisa al
+artista** de esa simplificación, así que un polígono concavo definido
+con cuidado (ej: un pasillo en L) acaba siendo un rect que cubre las
+dos paredes.
+
+### Reproducción
+
+[`resources/engine/agemki_engine.c:2178-2200`](../resources/engine/agemki_engine.c#L2178):
+
+```c
+void engine_walkmap_add_poly(int* pts, int n) {
+    /* Aproximacion: bounding box del poligono como rect navegable */
+    s16 mx, my, xx, xy; int i;
+    // ... computa min/max de los puntos
+    // ... rellena el rect resultante en g_walkmap (bitmap)
+}
+```
+
+El motor NO tiene una función `point_in_polygon` real. Todo el sistema
+de pasability funciona sobre `g_walkmap[gy * g_wm_w + gx]` (bitmap por
+celda). Los polígonos solo aportan su área enclosing.
+
+### Impacto
+
+Para walkmaps **rectangulares** (mayoría de rooms): cero impacto.
+Para walkmaps **con polígonos** (concavos, triangulares):
+
+- Áreas no transitables que el artista pretendía bloquear quedan
+  abiertas en runtime.
+- El personaje puede caminar por sitios "fuera" del polígono pero
+  dentro del bounding box.
+- El editor no muestra esto: la previsualización del walkmap usa la
+  forma real del polígono, no el bb.
+
+### Tres opciones
+
+**(a)** Documentar la limitación. Avisar en el editor cuando se dibuja
+un polígono no-rectangular: "el motor lo tratará como su bounding box.
+Para áreas precisas, usa rectángulos o un walkmap bitmap directo".
+Cambio mínimo, decisión más conservadora.
+
+**(b)** Implementar point-in-polygon real en el motor. La función
+clásica (ray casting) son ~15 líneas de C, sin ninguna dep HW. Una vez
+implementada, `engine_walkmap_add_poly` rasteriza el polígono real
+sobre la bitmap en lugar de usar el bounding box. Mantienes la
+representación bitmap (rápida) pero con datos correctos.
+
+**(c)** Migrar el walkmap de bitmap a representación vectorial
+(polígonos como first-class). Esto es invasivo, cambia mucho del
+motor (path-finding incluido), pero es lo más fiel a tu modelo del
+editor. Probable que no compense.
+
+### Para ti, ahora mismo
+
+Pregunta clave: **¿usas polígonos no-rectangulares en walkmaps reales?**
+
+- Si **no** (todo son rects): cero urgencia. Quizás opción (a) algún día
+  para avisar a futuros usuarios del editor.
+- Si **sí**: bug latente real. (b) es razonable, ~30 minutos de trabajo,
+  potencialmente otro fix bit-identico desde el editor JS.
+
+Lo descubrí montando los tests del motor en host (Sub-etapa 2.2 buscaba
+exponer `point_in_polygon` para testear y resulta que no existía).
+Documentado aquí para que decidas. Cuando quieras te monto opción (b)
+con tests bit-exact JS↔C.
+
+### Mitigación temporal en tests
+
+Ninguna. Sub-etapa 2.2 entrega solo PCX decode (ya completo y verde).
+La parte de "geometría 2D" del plan original asumía funciones que no
+existen en el motor. Sub 2.3 (A* pathfinding) adelanta y testea la
+helpers que sí existen (`_walk_passable`, `_heuristic`).
 
 ---
 
