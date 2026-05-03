@@ -6,6 +6,7 @@ node_modules/
 !.claude/settings.json
 !.claude/hooks/
 !.claude/skills/
+!.claude/plans/
 .vscode
 mcp-servers/
 documentation/
