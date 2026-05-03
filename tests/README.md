@@ -186,11 +186,13 @@ agemki/
 │   │   └── __snapshots__/       snapshots vitest (preview hex de cabeceras)
 │   │
 │   └── engine_host/        ← Phase 3a — runner C compilado con clang en host
-      ├── lib/crc32.c           copia byte-exact de _sfx_crc32 del motor
-      ├── include/ag_test.h     header compartido del runner
-      ├── runner.c              entrypoint con dispatcher de tests
-      ├── build.mjs             compila con clang (cross-platform mac/win)
-      └── runner / runner.exe   binario generado (gitignored)
+      ├── lib/
+      │   ├── crc32.c          copia byte-exact de _sfx_crc32 (sub 2.1)
+      │   └── pcx_decode.c     copia byte-exact de _pcx_decode RLE (sub 2.2)
+      ├── include/ag_test.h    header compartido del runner
+      ├── runner.c             entrypoint con dispatcher de tests
+      ├── build.mjs            compila con clang (cross-platform mac/win)
+      └── runner / runner.exe  binario generado (gitignored)
 │
 ├── goldens/                ← outputs esperados (entran al repo, !goldens/** en .gitignore)
 │   ├── dat/
@@ -200,7 +202,8 @@ agemki/
 │   │       ├── AUDIO.DAT
 │   │       ├── FONTS.DAT
 │   │       └── manifest.json    sha256 + size + numBlocks por DAT
-│   ├── engine/             (futuro Phase 3a) outputs binarios de lógica pura
+│   ├── engine/             outputs binarios de lógica pura del motor host
+│   │   └── pcx/                SHA-256 de cada PCX decodificado (sub 2.2)
 │   └── runtime/            (futuro Phase 3c) BMP frames del motor en DOSBox-X
 │                            capturados en puntos deterministas del game loop
 │
@@ -235,11 +238,11 @@ Smoke de los helpers de testing:
 - `decodeDat` parsea cabecera + index entry de un fichero AGMK construido a mano.
 - Constantes (`MAGIC`, `HEADER_SIZE`, `INDEX_ENTRY_SIZE`) coherentes con la spec.
 
-### `tests/golden/engine-host.test.js` (22 tests, Phase 3a)
+### `tests/golden/engine-host.test.js` (22 tests, Phase 3a sub 2.1)
 
 Tests del **subset portable del motor C** compilado con clang en host.
-Primer test: CRC32 (`_sfx_crc32` del motor) — algoritmo crítico porque
-el motor usa este hash para binary search en el TOC de SFX.DAT. Si
+Primer módulo: CRC32 (`_sfx_crc32` del motor) — algoritmo crítico
+porque el motor lo usa para binary search en el TOC de SFX.DAT. Si
 difiere del CRC32 del codegen JS (sfxGenerator.js / datGenerator.js),
 los chunks no se encuentran en runtime.
 
@@ -257,6 +260,40 @@ Si clang no está disponible (Xcode CLT en mac, LLVM en win, apt en
 linux), el bloque de tests dependientes se **skipea** automáticamente
 y el suite sigue verde. El drift test SÍ se ejecuta siempre (no
 requiere clang).
+
+### `tests/golden/engine-host-pcx.test.js` (16 tests, Phase 3a sub 2.2)
+
+Tests del decoder PCX del motor: la sección RLE de
+`_pcx_decode` en `resources/engine/agemki_engine.c:995-1034`. La
+parte RLE (decompresión) es 100% portable, lo que toca registros VGA
+(`outp(0x3C8/0x3C9)` para cargar la paleta) queda fuera del subset
+host por ser HW-only.
+
+Cubre:
+- **Drift detection** (sin clang): la copia en
+  `tests/engine_host/lib/pcx_decode.c` sigue byte-exact a la sección
+  RLE de `_pcx_decode` del motor. Cualquier edit en el motor que altere
+  esos bytes se caza con un test rojo y un mensaje claro.
+- **Bit-exact motor C ↔ JS**: para los 6 PCX del fixture minimal (BG,
+  sprite, objeto, 3 fuentes), el buffer decodificado por el runner C
+  coincide al byte con el de `jsPcxDecode` (implementación de
+  referencia en JS puro).
+- **Goldens binarios**: el SHA-256 del buffer decodificado de cada PCX
+  se persiste en `goldens/engine/pcx/<name>.sha256.txt`. Cualquier
+  cambio en bytes (por edit del motor, del fixture, o de cualquier
+  intermedio) deja el SHA distinto y el test rojo identifica qué PCX
+  cambió.
+- **Sanity sobre dimensiones**: cada fixture decodifica al `WxH`
+  esperado.
+
+Por qué no testear `apply_pal`: usa `outp()` (escritura a registros
+DAC de VGA) y `g_pal_raw` (global del motor). En host no tiene sentido,
+sería testear el stub.
+
+Por qué hex en stdout y no bytes raw: en Windows, stdout tiene
+LF→CRLF translation por defecto que corrompe bytes 0x0A. El runner
+C emite el buffer como hex (2 chars por byte) para evitar el issue
+sin parches específicos de OS.
 
 ### `tests/golden/dat.test.js` (26 tests)
 
@@ -404,6 +441,142 @@ con cache buster para reiniciar `loadRecent()`.
 
 ---
 
+## Cómo funciona el motor host (Phase 3a)
+
+Los tests `engine-host*.test.js` validan que módulos puros del motor
+C (CRC32, decoder PCX, A*, lightmap, ...) producen los mismos bytes
+ejecutándose en host con clang que ejecutándose en DOS con Watcom.
+La idea es **cazar regresiones del motor sin necesidad de DOSBox-X
+ni de bootear el juego**.
+
+### Las 4 piezas que cooperan
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                                                                         │
+│  resources/engine/<file>.c          tests/engine_host/lib/<file>.c      │
+│  ┌──────────────────────────┐       ┌────────────────────────────────┐  │
+│  │ función real del motor   │ ←══→  │ copia byte-exact de la sección │  │
+│  │ (puede tener HW outp/    │ drift │ portable (sin HW)              │  │
+│  │  globals/etc.)           │ test  │                                │  │
+│  └──────────────────────────┘       └────────────────────────────────┘  │
+│           ↑                                       ↓ clang -std=c89      │
+│           │                                ┌─────────────────────┐      │
+│           │                                │  ./runner <test>    │      │
+│           │                                │  emite output hex   │      │
+│           │                                └─────────────────────┘      │
+│           │                                       ↓ stdout              │
+│           │                                ┌─────────────────────┐      │
+│           │   función JS de referencia → │ tests/golden/       │      │
+│           └─────────────────────────────→ │ engine-host-*.test  │      │
+│                                           │ .js                 │      │
+│                                           └─────────────────────┘      │
+│                                                  ↓                     │
+│                                    SHA-256 → goldens/engine/<m>/*.txt  │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+| Pieza | Función | Dónde |
+|---|---|---|
+| **Motor real** | El código que ejecuta el juego en DOS | `resources/engine/*.c` |
+| **Copia portable** | Subset del motor compilable con clang en host | `tests/engine_host/lib/*.c` |
+| **Runner C** | Binario host que invoca cada función bajo test y emite output | `tests/engine_host/runner.c` → `runner` (gitignored) |
+| **JS reference impl** | Misma lógica reescrita en JS puro, validador independiente | `tests/helpers/engine-host.js` |
+
+### Las 3 garantías (cada una caza un tipo de regresión)
+
+1. **Drift test** — la copia en `lib/` sigue byte-exact al motor real.
+   Si Javi edita el motor, te avisa para sincronizar la copia.
+   *No requiere clang* — solo lee los `.c` con `fs.readFileSync` y los
+   compara con regex extractors.
+
+2. **Bit-exact JS ↔ C** — el output del motor coincide con el de la
+   implementación JS de referencia. Si el motor cambia su lógica
+   (no solo su sintaxis), te avisa.
+
+3. **Goldens binarios** — el SHA-256 de los outputs reales (`buffer
+   decodificado`, `lista de waypoints`, `bitmap lightmap`, ...) se
+   persiste en `goldens/engine/<modulo>/`. Cualquier cambio que
+   altere bytes deja el SHA distinto y el test rojo identifica qué
+   fixture cambió.
+
+### Workflow cuando edites el motor
+
+Si tocas `resources/engine/agemki_audio.c` o `agemki_engine.c`:
+
+1. **Hook automático** dispara `tests/golden/engine-host*.test.js`.
+2. Si tu cambio NO toca lógica cubierta → todo verde, sigues.
+3. Si tu cambio toca una función cubierta → drift FAIL con mensaje
+   tipo "lib/pcx_decode.c y agemki_engine.c divergen". Dos opciones:
+   - Cambio intencional: copia el bloque actualizado del motor a
+     `tests/engine_host/lib/<file>.c`. Ejecuta `npm run goldens:update`
+     si los bytes producidos también cambiaron.
+   - Cambio no intencional: revierte.
+4. Si tu cambio en el motor produce **bytes distintos** (no solo
+   estilo/comments): el drift queda verde tras sincronizar la copia,
+   pero los SHA-256 de los goldens fallan. Ahí decides si el cambio
+   es legítimo (regenera goldens) o es un bug (revierte).
+
+### Cómo añadir un nuevo módulo (el patrón)
+
+Cuando arranques una sub-etapa nueva (ej: A* en sub 2.3), el patrón:
+
+1. **Localizar la función pura** en el motor. Identifica qué deps HW
+   tiene (`outp/inp/int86`, globals, etc.). Si el módulo está
+   acoplado a HW de forma que no se puede aislar trivialmente,
+   replantea — quizás necesite refactor.
+2. **Copiar byte-exact** la sección portable a
+   `tests/engine_host/lib/<modulo>.c`. Renombra la función con
+   prefijo `ag_test_` para exponerla.
+3. **Añadir typedef** si la copia usa tipos del motor (`u8`, `s16`,
+   `Point`, ...). Mapear a `<stdint.h>` o equivalentes en host.
+4. **Extender el runner** (`runner.c`) con un dispatcher nuevo
+   (`./runner <comando> <args>`). Output siempre en formato
+   line-based + hex (no binario raw, ver "por qué hex" abajo).
+5. **Helper JS en `tests/helpers/engine-host.js`** con:
+   - Función `runner<Modulo>(...)` que invoca el binario y parsea
+     stdout.
+   - Función `js<Modulo>(...)` que reimplementa el algoritmo en JS
+     puro, sirve de referencia.
+   - Función `detect<Modulo>Drift()` con la regex que extrae el
+     bloque del motor real y lo compara con la copia local.
+6. **Test vitest** en `tests/golden/engine-host-<modulo>.test.js`
+   con tres bloques:
+   - `describe('drift detection (sin clang)', ...)` — independiente.
+   - `describe.skipIf(noClang)('bit-exact con JS', ...)` — el grueso.
+   - `describe.skipIf(noClang)('goldens', ...)` — SHA-256 vs
+     `goldens/engine/<modulo>/`.
+7. **Hook**: el matcher actual ya cubre `resources/engine/*.c|*.h`,
+   no hace falta tocar nada.
+8. **`tests/README.md`**: añadir sección sobre el nuevo test.
+
+### Por qué hex y no bytes raw en el stdout del runner
+
+Windows hace LF→CRLF translation por defecto en stdout. Cualquier
+byte 0x0A en el output binario se convierte a 0x0D 0x0A al salir,
+corrompiendo el SHA-256 y rompiendo el test cross-platform.
+
+Solución elegida: el runner emite el buffer como cadena hex (2 chars
+por byte). Cero bytes 0x0A en el output, cero translation issue.
+Coste: ~2x bytes en stdout, despreciable para fixtures pequeños.
+
+Alternativa con `_setmode(_fileno(stdout), _O_BINARY)` también
+funcionaría, pero requiere `#ifdef _WIN32` y headers `<io.h>` en C
+— el hex es más simple y portable.
+
+### Skip elegante si clang no está
+
+`tests/engine_host/build.mjs` invoca `clang --version` al arrancar.
+Si no está disponible (mac sin Xcode CLT, win sin LLVM, linux sin
+apt), el build sale con exit 2 y el helper `ensureRunnerBuilt()`
+devuelve `{ status: 'no-clang' }`.
+
+`describe.skipIf(noClang)` skipea automáticamente los bloques que
+necesitan el binario, manteniendo el suite verde. **El drift test
+NO se skipea** — solo lee `.c` files con `fs`, no requiere clang.
+
+---
+
 ## Cómo funciona el hook `PostToolUse`
 
 `.claude/settings.json` registra un hook que se dispara cada vez que
@@ -437,7 +610,7 @@ El hook `.claude/hooks/run-tests-on-edit.mjs`:
 | `src/main/index.js` | `tests/golden/` |
 | `src/renderer/src/store/*.js` | `tests/unit/stores/` |
 | `tests/fixtures/*` o `tests/helpers/*` | `tests/` (toda la suite) |
-| `resources/engine/*.c` o `*.h` | `tests/engine_host/` (Phase 3a) |
+| `resources/engine/*.c` o `*.h` | `tests/golden/engine-host*.test.js` (drift + tests del módulo si clang está disponible) |
 | Cualquier otro path | noop, sale 0 |
 
 Reglas del hook:
