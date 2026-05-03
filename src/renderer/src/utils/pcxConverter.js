@@ -247,23 +247,23 @@ function pcxToDataURL(indices, width, height, palette) {
 }
 
 /**
- * Normaliza un nombre de fichero a formato MS-DOS 8.3
+ * Normaliza un nombre de fichero para asset PCX (sin límite de longitud).
  */
-export function normalizeFilename8dot3(name) {
-  // Quitar extensión
+export function normalizePcxName(name) {
   const dotIdx = name.lastIndexOf('.')
   let base = dotIdx > 0 ? name.slice(0, dotIdx) : name
 
-  // Solo A-Z 0-9 _
   base = base
     .toUpperCase()
     .replace(/\s+/g, '_')
     .replace(/[^A-Z0-9_]/g, '')
-    .slice(0, 8)
 
   if (!base) base = 'ASSET'
   return base + '.PCX'
 }
+
+/** @deprecated usar normalizePcxName */
+export function normalizeFilename8dot3(name) { return normalizePcxName(name) }
 
 /**
  * Lee un fichero como ImageData usando Canvas API.

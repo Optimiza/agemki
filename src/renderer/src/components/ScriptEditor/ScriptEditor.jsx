@@ -177,6 +177,7 @@ function FieldPicker({ fieldDef, value, onChange, data, instr = {}, scriptId = '
       return (
         <select value={value || ''} onChange={e => onChange(e.target.value)}>
           <option value="">— personaje —</option>
+          <option value="@">@ protagonista activo</option>
           {chars.map(c => <option key={c.id} value={c.id}>{charName(c.id)}</option>)}
         </select>
       )

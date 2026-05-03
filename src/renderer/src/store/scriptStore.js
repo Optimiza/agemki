@@ -122,6 +122,9 @@ export const INSTR = {
   SET_CHAR_VISIBLE:   { cat:'char', label:'Visibilidad personaje',     fields:[{k:'charId',t:'char'},{k:'visible',t:'bool'}] },
   // Solo funciona si game.json.systems.allowCharacterSwitch es true
   CHANGE_PROTAGONIST: { cat:'char', label:'Cambiar protagonista',      fields:[{k:'charId',t:'char'}] },
+  PARTY_ADD:          { cat:'char', label:'Añadir personaje al grupo',    fields:[{k:'charId',t:'char'}] },
+  PARTY_REMOVE:       { cat:'char', label:'Eliminar personaje del grupo', fields:[{k:'charId',t:'char'}] },
+  PARTY_CLEAR:        { cat:'char', label:'Vaciar grupo de personajes',   fields:[] },
 
   // ── Objetos ───────────────────────────────────────────────────────────────
 

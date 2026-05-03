@@ -76,6 +76,9 @@ export const STEPS = {
   face_dir:         { cat:'char', label:'Orientar personaje',    fields:[{k:'charId',t:'char'},{k:'dir',t:'dir'}] },
   set_char_visible: { cat:'char', label:'Visibilidad personaje', fields:[{k:'charId',t:'char'},{k:'visible',t:'bool'}] },
   parallel_block:   { cat:'char', label:'Bloque paralelo',       fields:[], note:'Los pasos dentro se ejecutan a la vez' },
+  party_join:       { cat:'char', label:'Añadir personaje al grupo',      fields:[{k:'charId',t:'char'}] },
+  party_leave:      { cat:'char', label:'Eliminar personaje del grupo',   fields:[{k:'charId',t:'char'}] },
+  party_clear:      { cat:'char', label:'Vaciar grupo de personajes',     fields:[] },
 
   // ── Diálogo ────────────────────────────────────────────────────────────────
 
@@ -153,6 +156,22 @@ export const STEPS = {
 
   wait:         { cat:'timing', label:'Esperar (segundos)', fields:[{k:'seconds',t:'number',ph:'segundos'}] },
   end_sequence: { cat:'timing', label:'Fin de secuencia',   fields:[] },
+
+  // ── Protección ─────────────────────────────────────────────────────────────
+
+  protection_screen: { cat:'logic', label:'Pantalla de protección', note:'Bloqueante — acierto para continuar', fields:[
+    { k:'question',   t:'text',              ph:'Texto de la pregunta' },
+    { k:'answer',     t:'text',              ph:'Respuesta correcta (se compila como CRC32)' },
+    { k:'inputMode',  t:'prot_input_mode' },
+    { k:'imgMode',    t:'prot_img_mode' },
+    { k:'pcxA',       t:'bg_asset',          ph:'PCX principal / superior' },
+    { k:'pcxB',       t:'bg_asset',          ph:'PCX inferior / derecho' },
+    { k:'bgMode',     t:'prot_bg_mode' },
+    { k:'bgColor',    t:'pal_color' },
+    { k:'pcxBg',      t:'bg_asset',          ph:'PCX de fondo 320×200' },
+    { k:'failAction', t:'prot_fail_action' },
+    { k:'maxTries',   t:'number',            ph:'Intentos (0=infinito)' },
+  ]},
 }
 
 // ── Valores por defecto al insertar un paso nuevo ─────────────────────────────
@@ -182,6 +201,9 @@ function makeDefaultStep(type) {
     case 'face_dir':             return { charId: '', dir: 'front' }
     case 'set_char_visible':     return { charId: '', visible: true }
     case 'parallel_block':       return { steps: [] }
+    case 'party_join':           return { charId: '' }
+    case 'party_leave':          return { charId: '' }
+    case 'party_clear':          return {}
     case 'start_dialogue':       return { dialogueId: '' }
     case 'show_text':            return { localeKey:'', font:'medium', color:15, bgColor:'', position:'bottom', align:'center', effect:'none', typewriterSpeed:20, duration:3.0 }
     case 'scroll_text':          return { localeKey:'', color:14, align:'center', speed:40 }
@@ -211,6 +233,13 @@ function makeDefaultStep(type) {
     case 'call_sequence':        return { sequenceId: '' }
     case 'wait':                 return { seconds: 1.0 }
     case 'end_sequence':         return {}
+    case 'protection_screen':    return {
+      question: '', answer: '',
+      inputMode: 'text', imgMode: 'none',
+      pcxA: '', pcxB: '',
+      bgMode: 'black', bgColor: 0, pcxBg: '',
+      failAction: 'same', maxTries: 3,
+    }
     default:                     return {}
   }
 }

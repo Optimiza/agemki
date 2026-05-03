@@ -18,6 +18,7 @@ button,input,select{margin:5px;padding:6px;}
 
 <div class="controls">
 <button id="detect">Detect Sprites</button>
+<button id="detectOneRow">Detect Sprites One Row</button>
 Zoom Main <input type="range" id="zoom" min="1" max="10" value="1"><span id="zoomValue">1x</span>
 Align <select id="align"><option value="center">center</option><option value="bottom">bottom</option><option value="top">top</option></select>
 <button id="exportPNG">Export PNG</button>
@@ -184,6 +185,78 @@ if(f.h>maxFrameH)maxFrameH=f.h;
 
 }
 
+}
+
+generateFinalFrames();
+selectedFrameIndex=-1;
+arrangeFramesEditor();
+draw();
+drawFrameEditor();
+
+}
+
+document.getElementById("detectOneRow").onclick=()=>{
+
+if(!img)return;
+
+frames=[];
+finalFrames=[];
+nextFrameID=0;
+maxFrameW=0;
+maxFrameH=0;
+
+const temp=document.createElement("canvas");
+temp.width=img.width;
+temp.height=img.height;
+const tctx=temp.getContext("2d");
+tctx.drawImage(img,0,0);
+
+const data=tctx.getImageData(0,0,img.width,img.height).data;
+
+const isBackground=(x,y)=>{
+const i=(y*img.width+x)*4;
+const a=data[i+3];
+const r=data[i];
+const g=data[i+1];
+const b=data[i+2];
+return a===0||(r===255&&g===0&&b===255);
+}
+
+// Trim vertical global: buscar minY y maxY de toda la imagen
+let globalMinY=img.height,globalMaxY=-1;
+for(let y=0;y<img.height;y++){
+for(let x=0;x<img.width;x++){
+if(!isBackground(x,y)){
+if(y<globalMinY)globalMinY=y;
+if(y>globalMaxY)globalMaxY=y;
+}
+}
+}
+
+if(globalMaxY<0)return;
+
+const trimH=globalMaxY-globalMinY+1;
+
+// Columnas con contenido (al menos un píxel no-background en el rango Y trimado)
+const colHasContent=new Uint8Array(img.width);
+for(let x=0;x<img.width;x++){
+for(let y=globalMinY;y<=globalMaxY;y++){
+if(!isBackground(x,y)){colHasContent[x]=1;break;}
+}
+}
+
+// Agrupar columnas consecutivas con contenido → un frame por grupo
+let inSprite=false,spriteStartX=0;
+for(let x=0;x<=img.width;x++){
+const has=x<img.width&&colHasContent[x];
+if(has&&!inSprite){inSprite=true;spriteStartX=x;}
+else if(!has&&inSprite){
+inSprite=false;
+const f={id:nextFrameID++,x:spriteStartX,y:globalMinY,w:x-spriteStartX,h:trimH};
+frames.push(f);
+if(f.w>maxFrameW)maxFrameW=f.w;
+if(f.h>maxFrameH)maxFrameH=f.h;
+}
 }
 
 generateFinalFrames();

@@ -466,6 +466,7 @@ function FieldPicker({ fd, value, onChange, data, step = {}, gameDir = '', seqId
       return (
         <select value={value||''} onChange={e => onChange(e.target.value)}>
           <option value="">— personaje —</option>
+          <option value="@">@ protagonista activo</option>
           {chars.map(c => <option key={c.id} value={c.id}>{charName(c.id)}</option>)}
         </select>
       )
@@ -555,6 +556,44 @@ function FieldPicker({ fd, value, onChange, data, step = {}, gameDir = '', seqId
       )
     case 'number':
       return <input type="number" value={value??0} step="0.1" onChange={e => onChange(Number(e.target.value))} style={{ width: 80 }} />
+
+    case 'prot_input_mode':
+      return (
+        <select value={value||'text'} onChange={e => onChange(e.target.value)}>
+          <option value="text">Texto libre</option>
+          <option value="digits">Solo dígitos (0-9)</option>
+          <option value="alphanum">Alfanumérico</option>
+        </select>
+      )
+
+    case 'prot_img_mode':
+      return (
+        <select value={value||'none'} onChange={e => onChange(e.target.value)}>
+          <option value="none">Sin imagen</option>
+          <option value="single">Una imagen centrada</option>
+          <option value="halves">Mitades (pcxA sup + pcxB inf)</option>
+          <option value="two">Dos imágenes (izq + dcha)</option>
+        </select>
+      )
+
+    case 'prot_bg_mode':
+      return (
+        <select value={value||'black'} onChange={e => onChange(e.target.value)}>
+          <option value="black">Negro</option>
+          <option value="color">Color sólido</option>
+          <option value="pcx">PCX de fondo</option>
+        </select>
+      )
+
+    case 'prot_fail_action':
+      return (
+        <select value={value||'same'} onChange={e => onChange(e.target.value)}>
+          <option value="same">Misma pregunta</option>
+          <option value="new">Pregunta siguiente</option>
+          <option value="quit">Salir del juego</option>
+        </select>
+      )
+
     default:
       return <input type="text" value={value||''} placeholder={ph||k} onChange={e => onChange(e.target.value)} />
   }
@@ -594,6 +633,15 @@ function StepRow({ step, idx, total, data, onUpdate, onDelete, onMove, onDuplica
         <div className={`seq-step__fields ${isTextStep ? 'seq-step__fields--text' : ''}`}>
           {def.fields.map(fd => {
             if (fd.k === 'typewriterSpeed' && step.effect !== 'typewriter') return null
+            /* Campos condicionales de protection_screen */
+            if (step.type === 'protection_screen') {
+              const imgMode = step.imgMode || 'none'
+              const bgMode  = step.bgMode  || 'black'
+              if (fd.k === 'pcxA'    && imgMode === 'none')   return null
+              if (fd.k === 'pcxB'    && (imgMode === 'none' || imgMode === 'single')) return null
+              if (fd.k === 'bgColor' && bgMode  !== 'color')  return null
+              if (fd.k === 'pcxBg'   && bgMode  !== 'pcx')    return null
+            }
             const isFull = fd.t === 'seq_locale_text'
             return (
               <label key={fd.k} className={`seq-field-row ${isFull ? 'seq-field-row--full' : ''}`}>

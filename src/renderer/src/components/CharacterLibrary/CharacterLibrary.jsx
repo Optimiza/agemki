@@ -3,6 +3,7 @@ import { useAppStore }    from '../../store/appStore'
 import { useCharStore }   from '../../store/charStore'
 import { useLocaleStore } from '../../store/localeStore'
 import CharacterEditor    from './CharacterEditor'
+import PartyBallPanel     from './PartyBallPanel'
 import { useCharFirstFrame } from '../../hooks/useCharFirstFrame'
 import './CharacterLibrary.css'
 
@@ -60,6 +61,7 @@ export default function CharacterLibrary() {
   const { langs, activeLang, locales, loadAll: loadLocales,
           loaded: localesLoaded } = useLocaleStore()
 
+  const [tab, setTab]             = useState('chars') // 'chars' | 'partyball'
   const [creating, setCreating]   = useState(false)
   const [newName, setNewName]     = useState('')
   const [newIsProto, setNewIsProto] = useState(false)
@@ -116,6 +118,17 @@ export default function CharacterLibrary() {
 
   return (
     <div className="char-library">
+      {/* Tabs */}
+      <div className="obj-right-tabs">
+        <button className={`obj-right-tab ${tab === 'chars' ? 'active' : ''}`}
+          onClick={() => setTab('chars')}>Personajes</button>
+        <button className={`obj-right-tab ${tab === 'partyball' ? 'active' : ''}`}
+          onClick={() => setTab('partyball')}>Bola de party</button>
+      </div>
+
+      {tab === 'partyball' && <PartyBallPanel />}
+
+      {tab === 'chars' && <>
       {/* Toolbar */}
       <div className="char-library__toolbar">
         <input type="text" className="char-library__search" placeholder="Buscar personaje…"
@@ -176,6 +189,7 @@ export default function CharacterLibrary() {
           </div>
         )}
       </div>
+      </>}
     </div>
   )
 }

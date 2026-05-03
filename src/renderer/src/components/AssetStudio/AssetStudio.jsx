@@ -1,6 +1,6 @@
 import { useState, useRef, useCallback, useEffect } from 'react'
 import { useAppStore } from '../../store/appStore'
-import { convertToPCX, loadImageFile, normalizeFilename8dot3, pcxFileToDataURL } from '../../utils/pcxConverter'
+import { convertToPCX, loadImageFile, normalizePcxName, pcxFileToDataURL } from '../../utils/pcxConverter'
 import AssetEditor from './AssetEditor'
 import './AssetStudio.css'
 
@@ -148,7 +148,7 @@ function Importer({ palette, gameDir, onSaved, onPreviewChange }) {
       setSrcImage({ imageData, width, height, fileName: file.name })
       setCrop({ x: 0, y: 0, w: width, h: height })
       // Suggest normalized name but let user edit freely
-      const suggested = normalizeFilename8dot3(file.name)
+      const suggested = normalizePcxName(file.name)
       setPcxName(suggested)
       setOutW(width); setOutH(height)
     } catch (e) { setError('No se pudo cargar: ' + e.message) }
@@ -180,9 +180,9 @@ function Importer({ palette, gameDir, onSaved, onPreviewChange }) {
 
   async function handleSave() {
     if (!srcImage) return
-    const nameToUse = pcxName || normalizeFilename8dot3(srcImage.fileName)
-    if (!/^[A-Z0-9_]{1,8}\.PCX$/.test(nameToUse)) {
-      setError('El nombre debe cumplir formato 8.3: máx. 8 caracteres (A-Z, 0-9, _) seguido de .PCX')
+    const nameToUse = pcxName || normalizePcxName(srcImage.fileName)
+    if (!/^[A-Z0-9_]+\.PCX$/.test(nameToUse)) {
+      setError('El nombre solo puede contener letras (A-Z), números y _ seguido de .PCX')
       return
     }
     setSaving(true); setError('')
@@ -244,10 +244,10 @@ function Importer({ palette, gameDir, onSaved, onPreviewChange }) {
             {/* Nombre */}
             <div className="ctrl-group">
               <label className="ctrl-label">Nombre PCX</label>
-              <input type="text" value={pcxName} maxLength={16} placeholder="NOMBRE.PCX"
+              <input type="text" value={pcxName} maxLength={64} placeholder="NOMBRE.PCX"
                 onChange={e => setPcxName(e.target.value.toUpperCase())} />
-              {pcxName && !/^[A-Z0-9_]{1,8}\.PCX$/.test(pcxName) && (
-                <span className="field-warn">⚠ Debe ser máx. 8 caracteres + .PCX (solo A-Z 0-9 _)</span>
+              {pcxName && !/^[A-Z0-9_]+\.PCX$/.test(pcxName) && (
+                <span className="field-warn">⚠ Solo A-Z, 0-9, _ seguido de .PCX</span>
               )}
             </div>
 

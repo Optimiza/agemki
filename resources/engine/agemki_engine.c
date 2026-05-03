@@ -587,6 +587,7 @@ static ArrowSprite g_arrow_dn       = { NULL, 0 };
 static ArrowSprite g_arrow_dn_hover = { NULL, 0 };
 static ArrowSprite g_party_btn      = { NULL, 0 };
 static ArrowSprite g_party_btn_hov  = { NULL, 0 };
+static ArrowSprite g_party_btn_open = { NULL, 0 }; /* estado popup abierto */
 
 /* -- Flags globales --------------------------------------------------------- */
 typedef struct { char name[32]; int value; } Flag;
@@ -737,7 +738,8 @@ typedef struct {
 } Overlay;
 static Overlay g_overlays[MAX_OVERLAYS];
 static u8   g_overlay_click_seen = 0;
-static u8   g_script_running = 0;
+static u8   g_script_running  = 0;
+static u8   g_walk_scripted   = 0; /* 1 = protagonista camina por script, bloquea input */
 
 /* -- Escalado de personajes por Y (perspectiva) ----------------------------- */
 #define MAX_SCALE_ZONES 8
@@ -893,9 +895,14 @@ static int _overlays_active(void) {
     return 0;
 }
 
-/* Busca un personaje por id. Devuelve NULL si no existe. */
+/* Busca un personaje por id. Devuelve NULL si no existe.
+ * El id especial "@" resuelve al protagonista activo en runtime. */
 static Char* _find_char(const char* id) {
     int i;
+    if (id && id[0] == '@' && id[1] == '\0') {
+        if (g_char_count > 0) return &g_chars[g_protagonist];
+        return NULL;
+    }
     for (i = 0; i < g_char_count; i++)
         if (_str_eq(g_chars[i].id, id)) return &g_chars[i];
     return NULL;
@@ -1258,6 +1265,7 @@ void engine_dat_open_all(void) {
       g_arrow_dn_hover.buf = (u8*)engine_dat_load_gfx("inv_arrow_down_hover",&sz); g_arrow_dn_hover.size = sz;
       g_party_btn.buf      = (u8*)engine_dat_load_gfx("party_btn",           &sz); g_party_btn.size      = sz;
       g_party_btn_hov.buf  = (u8*)engine_dat_load_gfx("party_btn_hover",     &sz); g_party_btn_hov.size  = sz;
+      g_party_btn_open.buf = (u8*)engine_dat_load_gfx("party_btn_open",      &sz); g_party_btn_open.size = sz;
       DBG("arrow sprites: up=%p uhov=%p dn=%p dhov=%p\n",
           (void*)g_arrow_up.buf, (void*)g_arrow_up_hover.buf,
           (void*)g_arrow_dn.buf, (void*)g_arrow_dn_hover.buf);
@@ -1675,6 +1683,7 @@ static void _room_clear_state(void) {
     g_entry_count = 0;
     g_exit_count  = 0;
     g_pending_exit_id[0] = '\0'; /* limpiar exit pendiente al cambiar de room */
+    g_walk_scripted = 0;         /* cancelar bloqueo de input por walk de script */
     g_pending.type = PEND_NONE; g_pending.fn = NULL; /* cancelar accion pendiente — pertenecia a la room anterior */
     g_dar_mode = 0; g_dar_inv[0] = '\0'; g_dar_base[0] = '\0'; /* cancelar dar pendiente */
     g_scroll_halves     = 0;    /* resetear modo scroll-por-mitades */
@@ -1947,7 +1956,10 @@ void engine_change_room(const char* room_id, const char* entry_id) {
             if (!_str_eq(g_party[_rpi].room_id, g_cur_room)) continue;
             if (_find_char(g_party[_rpi].id)) continue; /* ya colocado */
             if (!g_party[_rpi].place_fn || g_char_count >= MAX_CHARS) continue;
-            g_party[_rpi].place_fn((s16)g_party[_rpi].x, (s16)g_party[_rpi].y);
+            { int _gp_bk = g_protagonist;
+              g_party[_rpi].place_fn((s16)g_party[_rpi].x, (s16)g_party[_rpi].y);
+              g_protagonist = _gp_bk; /* reinstate repone personajes de fondo; nunca cambia el protagonista activo */
+            }
             { Char* _rpc = _find_char(g_party[_rpi].id);
               if (_rpc && _rpc->pcx_buf) {
                   u16 _rw = 0, _rh = 0;
@@ -2486,12 +2498,16 @@ void engine_walk_char_to_obj(const char* char_id, const char* obj_id, u8 speed) 
 void engine_wait_walk(const char* char_id) {
     Char* c = _find_char(char_id);
     if (!c) return;
+    /* Bloquear input mientras el protagonista camina por secuencia de script */
+    if (g_char_count > 0 && c == &g_chars[g_protagonist])
+        g_walk_scripted = 1;
     /* Espera bloqueante: deja que engine_process_input mueva al personaje
      * con su sistema de tiempo real. Asi la animacion se ve correctamente. */
     while (c->walking && g_running) {
         if (!engine_process_input()) break;
         engine_flip();
     }
+    /* g_walk_scripted se limpia en walk_complete cuando c->walking pasa a 0 */
 }
 
 /* Configura espejo H/V para una animacion de un personaje.
@@ -2743,7 +2759,44 @@ void engine_party_add(const char* char_id, void (*place_fn)(s16, s16)) {
     _strlcpy(g_party[idx].room_id, g_cur_room, 32);
     g_party[idx].place_fn = place_fn;
     c = _find_char(char_id);
-    if (c) { g_party[idx].x = c->x; g_party[idx].y = c->y; }
+    if (c) {
+        g_party[idx].x = c->x;
+        g_party[idx].y = c->y;
+    } else if (place_fn && g_char_count < MAX_CHARS) {
+        /* Personaje no está en escena: inyectarlo ahora en la sala actual.
+         * place_fn fijará g_protagonist si el personaje es protagonista — no restaurar.
+         * El llamador puede reposicionarlo después con engine_move_char. */
+        place_fn(g_party[idx].x, g_party[idx].y);
+        c = _find_char(char_id);
+        if (c) {
+            u32 _sz = 0; u16 _w = 0, _h = 0;
+            if (c->anims[ANIM_IDLE].id[0] && !c->pcx_buf) {
+                c->pcx_buf  = (u8*)engine_dat_load_gfx(c->anims[ANIM_IDLE].id, &_sz);
+                c->pcx_size = _sz;
+                _strlcpy(c->pcx_loaded, c->anims[ANIM_IDLE].id, 32);
+            }
+            if (c->pcx_buf && !c->dec_buf) {
+                _pcx_decode(c->pcx_buf, c->pcx_size, g_pcx_decode_buf, &_w, &_h, 0);
+                if (_w > 0 && _h > 0) {
+                    c->dec_w = _w; c->dec_h = _h;
+                    if ((u32)_w * _h <= (u32)AG_SCREEN_PIXELS) {
+                        c->dec_buf = (u8*)malloc((u32)_w * _h);
+                        if (c->dec_buf) memcpy(c->dec_buf, g_pcx_decode_buf, (u32)_w * _h);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/* Vacia el grupo de protagonistas por completo. */
+void engine_party_clear(void) {
+    int i;
+    for (i = 0; i < g_party_count; i++) {
+        if (g_party[i].face_pcx_buf) { free(g_party[i].face_pcx_buf); g_party[i].face_pcx_buf = NULL; }
+    }
+    g_party_count      = 0;
+    g_party_popup_open = 0;
 }
 
 /* Elimina un personaje del grupo de protagonistas. */
@@ -4510,8 +4563,9 @@ void engine_render_verbset(void) {
     if (g_party_count > 1) {
         int _hbtn = (g_mouse.x >= 0 && g_mouse.x < PARTY_BTN_W &&
                      g_mouse.y >= UI_Y && g_mouse.y < UI_Y + ACTION_LINE_H);
-        ArrowSprite* _bsp = (_hbtn && g_party_btn_hov.buf) ? &g_party_btn_hov
-                          : (g_party_btn.buf)               ? &g_party_btn
+        ArrowSprite* _bsp = (g_party_popup_open && g_party_btn_open.buf) ? &g_party_btn_open
+                          : (_hbtn && g_party_btn_hov.buf)               ? &g_party_btn_hov
+                          : (g_party_btn.buf)                            ? &g_party_btn
                           : NULL;
         if (_bsp) {
             u16 _biw, _bih; s16 _bix, _biy;
@@ -5145,7 +5199,9 @@ void engine_seq_show_bg(const char* gfx_id, u32 duration_ms, u8 show_ui) {
 /* --- walk_char_nb: version no bloqueante de walk_char ---------------------- */
 void engine_walk_char_nb(const char* char_id, s16 x, s16 y, u8 speed) {
     engine_walk_char(char_id, x, y, speed);
-    /* No bloqueante: solo inicia el camino, no espera */
+    /* Bloquear input mientras el protagonista camina por script */
+    if (g_char_count > 0 && _str_eq(char_id, g_chars[g_protagonist].id))
+        g_walk_scripted = 1;
 }
 
 /* --- wait_all_chars: espera a que todos los personajes terminen de caminar -- */
@@ -5668,12 +5724,27 @@ static int                    _dlg_scroll       = 0;
 /* -1 = nada; >=0 = _dlg_panel_cval[idx] elegido por teclado */
 static int                    g_dlg_kb_chosen   = -1;
 
+/* Deriva la clave de flag interna para una opción de diálogo */
+static void _opt_flag_key(const char* text_key, char* out28) {
+    int i;
+    out28[0]='_'; out28[1]='o'; out28[2]='_';
+    for (i = 0; i < 28 && text_key[i]; i++) out28[i+3] = text_key[i];
+    out28[i+3] = '\0';
+}
+
 /* Precalcula lineas con word-wrap para todas las opciones visibles */
 static void _dlg_build_lines(void) {
     int i; char wb[MAX_TEXT_LEN+1];
     _dlg_total_lines = 0;
     for (i = 0; i < _dlg_panel_cnv; i++) {
-        const char* raw = engine_text(_dlg_panel_node->options[_dlg_panel_cval[i]].text_key);
+        const DialogueOption* _dop = &_dlg_panel_node->options[_dlg_panel_cval[i]];
+        const char* _tk = _dop->text_key;
+        /* text_key_once: mostrar texto alternativo si el flag aún no está puesto */
+        if (_dop->text_key_once && _dop->text_key_once[0]) {
+            char _oflg[32]; _opt_flag_key(_dop->text_key, _oflg);
+            if (!engine_get_flag(_oflg)) _tk = _dop->text_key_once;
+        }
+        const char* raw = engine_text(_tk);
         const char* p; int li = 0;
         _word_wrap(raw, wb, MAX_TEXT_LEN+1, DLG_COLS);
         p = wb;
@@ -5722,6 +5793,7 @@ void engine_run_dialogue(const DialogueNode* nodes, int n, const char* start_id)
     DBG("run_dialogue: start=\'%s\' found=%d n=%d\n", start_id, cur!=NULL, n);
     do { _mouse_poll(); } while (g_mouse.buttons);
     g_script_running = 1;
+    engine_hide_ui();
 
     while (cur && g_running) {
         int li;
@@ -5880,12 +5952,17 @@ void engine_run_dialogue(const DialogueNode* nodes, int n, const char* start_id)
         {
             int _cnv = 0, _chosen = -1;
 
-            /* Filtrar opciones por condicion y char_filter */
+            /* Filtrar opciones por condicion, char_filter y once */
             { const char* _opid = (g_char_count > 0) ? g_chars[g_protagonist].id : "";
             for (i = 0; i < cur->num_options; i++) {
                 if (!cur->options[i].text_key || !cur->options[i].text_key[0]) continue;
                 if (cur->options[i].char_filter && cur->options[i].char_filter[0] &&
                     !_str_eq(cur->options[i].char_filter, _opid)) continue;
+                /* once: ocultar si ya fue elegida */
+                if (cur->options[i].once) {
+                    char _oflg[32]; _opt_flag_key(cur->options[i].text_key, _oflg);
+                    if (engine_get_flag(_oflg)) continue;
+                }
                 if (!cur->options[i].condition[0] ||
                     engine_eval_cond(cur->options[i].condition))
                     _dlg_panel_cval[_cnv++] = i;
@@ -5954,6 +6031,13 @@ void engine_run_dialogue(const DialogueNode* nodes, int n, const char* start_id)
             _dlg_panel_node   = NULL;
 
             if (_cnv == 0 || _chosen < 0) break;
+            /* Registrar uso de la opción si es once o text_key_once */
+            { const DialogueOption* _cho = &cur->options[_chosen];
+              if (_cho->once || (_cho->text_key_once && _cho->text_key_once[0])) {
+                  char _oflg[32]; _opt_flag_key(_cho->text_key, _oflg);
+                  engine_set_flag(_oflg, "1");
+              }
+            }
             { const char* _nx = cur->options[_chosen].next_node_id;
               if (!_nx || !_nx[0]) break;
               cur = NULL;
@@ -5964,6 +6048,7 @@ void engine_run_dialogue(const DialogueNode* nodes, int n, const char* start_id)
     }
     _overlay_clear_all();
     engine_clear_text();
+    engine_show_ui();
     /* Consumir botones pendientes: evita que el click que disparo el dialogo
      * se procese como accion de movimiento al volver al game loop */
     do { _mouse_poll(); } while (g_mouse.buttons);
@@ -7619,6 +7704,11 @@ static void _savemenu_run(int is_save) {
 }
 
 static void _menu_handle_result(int result) {
+    /* Restaurar paleta VGA: DOSBox puede corromperla al perder el foco durante
+     * tiempo prolongado. Al volver del menu el juego retoma control visual. */
+    { int _pi; outp(0x3C8, 0);
+      for (_pi = 0; _pi < 256*3; _pi++) outp(0x3C9, g_pal_raw[_pi] >> 2);
+      outp(0x3C8, 0); outp(0x3C9,0); outp(0x3C9,0); outp(0x3C9,0); }
     switch (result) {
     case 0: /* Continuar */ break;
     case 1: /* Nueva partida — confirmacion + restart */
@@ -7982,7 +8072,7 @@ int engine_process_input(void) {
     }
 
     /* Click derecho: reset a verbo de movimiento */
-    if ((g_mouse.buttons & 2) && !(prev_buttons & 2) && !g_script_running) {
+    if ((g_mouse.buttons & 2) && !(prev_buttons & 2) && !g_script_running && !g_walk_scripted) {
     /* Cancelar modo usar_con/dar si activo, sino restablecer verbo */
     g_usar_con_mode = 0; g_usar_con_inv[0] = '\0'; g_usar_con_base[0] = '\0';
     g_dar_mode = 0; g_dar_inv[0] = '\0'; g_dar_base[0] = '\0';
@@ -8004,7 +8094,7 @@ int engine_process_input(void) {
         g_overlay_click_seen = 1;
 
     /* Click izquierdo */
-    if ((g_mouse.buttons & 1) && !(prev_buttons & 1) && !g_script_running) {
+    if ((g_mouse.buttons & 1) && !(prev_buttons & 1) && !g_script_running && !g_walk_scripted) {
 
         /* -- Popup de party (grid de caras, zona de juego) -- */
         if (g_party_popup_open && g_party_count > 1 && g_mouse.y < UI_Y) {
@@ -8599,13 +8689,39 @@ int engine_process_input(void) {
                         { _is_mv = 1; break; }
 
                 if (_is_mv && g_char_count > 0) {
-                    /* Verbo movimiento: caminar hacia el centro de la zona de salida */
-                    _strlcpy(g_pending_exit_id, clicked_exit->id, 32);
-                    s16 ex_cx = (s16)(clicked_exit->tz.x + clicked_exit->tz.w / 2);
-                    s16 ex_cy = (s16)(clicked_exit->tz.y + clicked_exit->tz.h / 2);
+                    /* Verbo movimiento: caminar al punto más cercano del rect de salida.
+                     * Clamp de la posición del personaje al rect — evita apuntar al centro
+                     * del trigger que puede estar por encima del walkmap (p.ej. hueco de puerta). */
                     Char* _pr = &g_chars[g_protagonist];
+                    s16 ex_cx, ex_cy;
                     Point _path[64];
-                    int _plen = engine_astar(_pr->x, _pr->y, ex_cx, ex_cy, _path, 64);
+                    int _plen;
+                    _strlcpy(g_pending_exit_id, clicked_exit->id, 32);
+                    ex_cx = _pr->x < clicked_exit->tz.x ? clicked_exit->tz.x :
+                            (_pr->x > (s16)(clicked_exit->tz.x + clicked_exit->tz.w) ?
+                             (s16)(clicked_exit->tz.x + clicked_exit->tz.w) : _pr->x);
+                    ex_cy = _pr->y < clicked_exit->tz.y ? clicked_exit->tz.y :
+                            (_pr->y > (s16)(clicked_exit->tz.y + clicked_exit->tz.h) ?
+                             (s16)(clicked_exit->tz.y + clicked_exit->tz.h) : _pr->y);
+                    _plen = engine_astar(_pr->x, _pr->y, ex_cx, ex_cy, _path, 64);
+                    if (_plen <= 0) {
+                        /* Clamp no alcanzable: escanear rect para hallar celda caminable más cercana.
+                         * Necesario cuando la salida está en zona no walkable (ej. camino en cliff). */
+                        { s16 _bx = ex_cx, _by = ex_cy; int _bd = 0x7FFFFFFF;
+                          s16 _ry, _rx;
+                          for (_ry = clicked_exit->tz.y; _ry <= (s16)(clicked_exit->tz.y + clicked_exit->tz.h); _ry = (s16)(_ry + WALKMAP_CELL_SIZE)) {
+                              for (_rx = clicked_exit->tz.x; _rx <= (s16)(clicked_exit->tz.x + clicked_exit->tz.w); _rx = (s16)(_rx + WALKMAP_CELL_SIZE)) {
+                                  int _d = (int)(_rx - _pr->x) * (int)(_rx - _pr->x) + (int)(_ry - _pr->y) * (int)(_ry - _pr->y);
+                                  if (_d < _bd && _walk_passable(_rx / WALKMAP_CELL_SIZE, _ry / WALKMAP_CELL_SIZE))
+                                      { _bd = _d; _bx = _rx; _by = _ry; }
+                              }
+                          }
+                          if (_bx != ex_cx || _by != ex_cy) {
+                              ex_cx = _bx; ex_cy = _by;
+                              _plen = engine_astar(_pr->x, _pr->y, ex_cx, ex_cy, _path, 64);
+                          }
+                        }
+                    }
                     if (_plen > 0) {
                         /* Hay camino: walk normal, _check_exits lo completa */
                         engine_walk_char(_pr->id, ex_cx, ex_cy, 0);
@@ -8724,6 +8840,7 @@ int engine_process_input(void) {
               if (sdx <= 4 && sdy <= 4) { c->x = c->target_x; c->y = c->target_y; }
             }
             c->walking    = 0;
+            if (i == g_protagonist) g_walk_scripted = 0;
             c->frame_cur  = 0;
             c->frame_timer = g_ticks_ms;
             c->speed = c->base_speed ? c->base_speed : 2;
@@ -9145,6 +9262,241 @@ void engine_reset_game(void) {
     /* Reactivar bucle */
     g_running           = 1;
     g_restart_requested = 0;
+}
+
+/* ── Pantalla de Protección ─────────────────────────────────────────────── */
+/* ProtEntry, PROT_* defines y engine_protection_screen() declarados en agemki_engine.h */
+
+/* CRC-32/ISO-HDLC — mismo algoritmo que el codegen JS compila como constante */
+static u32 _prot_crc32(const char* s) {
+    u32 crc = 0xFFFFFFFFUL;
+    while (*s) {
+        u8 c = (u8)(*s >= 'A' && *s <= 'Z' ? *s + 32 : *s);
+        int i;
+        crc ^= (u32)c;
+        for (i = 0; i < 8; i++)
+            crc = (crc >> 1) ^ (0xEDB88320UL & (u32)(-(int)(crc & 1u)));
+        s++;
+    }
+    return crc ^ 0xFFFFFFFFUL;
+}
+
+static void _prot_normalize(const char* src, char* dst, int maxlen) {
+    int i = 0, len;
+    const char* p = src;
+    /* trim inicio */
+    while (*p == ' ') p++;
+    /* copiar + lowercase */
+    while (*p && i < maxlen - 1) {
+        char c = *p;
+        if (c >= 'A' && c <= 'Z') c = (char)(c + 32);
+        dst[i++] = c;
+        p++;
+    }
+    dst[i] = '\0';
+    /* trim final */
+    len = i;
+    while (len > 0 && dst[len-1] == ' ') dst[--len] = '\0';
+}
+
+/* Blit PCX decodificado al backbuf con clip vertical */
+static void _prot_blit(u8* dst, const u8* src, u16 sw, u16 sh,
+                        s16 dx, s16 dy, s16 clip_y1, s16 clip_y2) {
+    s16 y;
+    for (y = 0; y < (s16)sh; y++) {
+        s16 ry = (s16)(dy + y);
+        if (ry < clip_y1 || ry >= clip_y2 || ry < 0 || ry >= AG_SCREEN_H) continue;
+        {
+            s16 xs = (s16)(dx < 0 ? -dx : 0);
+            s16 xe = (s16)(dx + (s16)sw > AG_SCREEN_W ? AG_SCREEN_W - dx : (s16)sw);
+            if (xs >= xe) continue;
+            memcpy(dst + (u32)(u16)ry * AG_SCREEN_W + (u32)(u16)(dx + xs),
+                   src + (u32)(u16)y  * sw            + (u32)(u16)xs,
+                   (size_t)(u16)(xe - xs));
+        }
+    }
+}
+
+/* Input loop para protección: filtra teclado según mode, devuelve 1 si confirmado */
+static int _prot_input(char* buf, int maxlen, u8 mode, s16 bx, s16 by, s16 bw) {
+    int len = 0; buf[0] = '\0';
+    while (1) {
+        /* Dibujar caja de entrada */
+        _fill_rect(bx, by, bw, (s16)12, (u8)1);
+        _draw_rect_border(bx, by, bw, (s16)12, (u8)15);
+        engine_draw_text((s16)(bx+3), (s16)(by+2), FONT_SMALL, 15, 0, buf);
+        { s16 cw = engine_text_width(FONT_SMALL, buf);
+          s16 cx = (s16)(bx + 3 + cw);
+          if (cx < bx + bw - 3) _fill_rect(cx, (s16)(by + 2), 1, 8, 15); }
+        _vga_flip();
+        _mouse_poll();
+        if (!kbhit()) continue;
+        { int k = getch();
+          if (k == 27) return 0;              /* ESC = cancelar */
+          if (k == 13) return 1;             /* Enter = confirmar */
+          if (k == 8) { if (len > 0) buf[--len] = '\0'; continue; }
+          if (k == 0 || k == 0xE0) { getch(); continue; }
+          if (k >= 32 && k < 256 && len < maxlen - 1) {
+              int accept = 0;
+              switch (mode) {
+                  case PROT_DIGITS:   accept = (k >= '0' && k <= '9'); break;
+                  case PROT_ALPHANUM: accept = ((k>='0'&&k<='9')||(k>='A'&&k<='Z')||(k>='a'&&k<='z')); break;
+                  default:            accept = 1; break;
+              }
+              if (accept) { buf[len++] = (char)k; buf[len] = '\0'; }
+          }
+        }
+    }
+}
+
+void engine_protection_screen(const ProtEntry* entries, int count) {
+    static u8 _prot_tmp[AG_SCREEN_PIXELS];  /* buffer temp para imagen */
+    char  input[64];
+    char  norm[64];
+    int   tries = 0;
+    int   cur   = 0;  /* índice de pregunta actual */
+    int   done  = 0;
+
+    if (!entries || count <= 0) return;
+
+    /* Iniciar en una pregunta aleatoria si hay varias */
+    if (count > 1) cur = (int)(engine_ticks() % (u32)count);
+
+    while (!done) {
+        const ProtEntry* e = &entries[cur];
+        u8*   pbuf = NULL;
+        u32   psz  = 0;
+        u16   pw   = 0, ph = 0;
+        u8*   abuf = NULL;
+        u32   asz  = 0;
+        u16   aw   = 0, ah = 0;
+        u8*   bkbuf = NULL;
+        u32   bksz  = 0;
+        u16   bkw   = 0, bkh = 0;
+        s16   img_x, img_y, split_y;
+
+        /* ── Fondo ── */
+        memset(g_backbuf, 0, AG_SCREEN_PIXELS);
+        if (e->bg_mode == PROT_BG_COLOR) {
+            memset(g_backbuf, e->bg_color, AG_SCREEN_PIXELS);
+        } else if (e->bg_mode == PROT_BG_PCX && e->pcx_bg && e->pcx_bg[0]) {
+            bkbuf = (u8*)engine_dat_load_gfx(e->pcx_bg, &bksz);
+            if (bkbuf) {
+                _pcx_decode(bkbuf, bksz, g_pcx_decode_buf, &bkw, &bkh, 1);
+                free(bkbuf); bkbuf = NULL;
+                /* El PCX de fondo fija la paleta (apply_pal=1); copiar pixels */
+                if (bkw > 0 && bkh > 0) {
+                    u16 cw = bkw < AG_SCREEN_W ? bkw : AG_SCREEN_W;
+                    u16 ch = bkh < AG_SCREEN_H ? bkh : AG_SCREEN_H;
+                    u16 ry;
+                    for (ry = 0; ry < ch; ry++)
+                        memcpy(g_backbuf + (u32)ry * AG_SCREEN_W,
+                               g_pcx_decode_buf + (u32)ry * bkw, cw);
+                }
+            }
+        }
+
+        /* ── Imagen ── */
+        if (e->img_mode != PROT_IMG_NONE) {
+            /* Cargar pcx_a */
+            if (e->pcx_a && e->pcx_a[0]) {
+                pbuf = (u8*)engine_dat_load_gfx(e->pcx_a, &psz);
+                if (pbuf) {
+                    _pcx_decode(pbuf, psz, g_pcx_decode_buf, &pw, &ph, 0);
+                    free(pbuf); pbuf = NULL;
+                    if (pw > 0 && ph > 0)
+                        memcpy(_prot_tmp, g_pcx_decode_buf, (u32)pw * ph);
+                    else pw = ph = 0;
+                }
+            }
+
+            if (e->img_mode == PROT_IMG_SINGLE && pw > 0) {
+                img_x = (s16)((AG_SCREEN_W - (s16)pw) / 2);
+                img_y = (s16)((100 - (s16)ph) / 2 + 5);
+                _prot_blit(g_backbuf, _prot_tmp, pw, ph, img_x, img_y, 0, 105);
+
+            } else if (e->img_mode == PROT_IMG_HALVES && pw > 0) {
+                img_x  = (s16)((AG_SCREEN_W - (s16)pw) / 2);
+                img_y  = (s16)(5);
+                split_y = (s16)(img_y + (s16)(ph / 2));
+                /* Mitad superior de pcx_a */
+                _prot_blit(g_backbuf, _prot_tmp, pw, ph, img_x, img_y, 0, split_y);
+                /* Cargar pcx_b para mitad inferior */
+                if (e->pcx_b && e->pcx_b[0]) {
+                    abuf = (u8*)engine_dat_load_gfx(e->pcx_b, &asz);
+                    if (abuf) {
+                        _pcx_decode(abuf, asz, g_pcx_decode_buf, &aw, &ah, 0);
+                        free(abuf); abuf = NULL;
+                        if (aw > 0 && ah > 0) {
+                            s16 bx2 = (s16)((AG_SCREEN_W - (s16)aw) / 2);
+                            _prot_blit(g_backbuf, g_pcx_decode_buf, aw, ah,
+                                       bx2, img_y, split_y, (s16)(img_y + (s16)ah));
+                        }
+                    }
+                } else if (pw > 0) {
+                    /* Si no hay pcx_b, mitad inferior también de pcx_a */
+                    _prot_blit(g_backbuf, _prot_tmp, pw, ph, img_x, img_y,
+                               split_y, (s16)(img_y + (s16)ph));
+                }
+
+            } else if (e->img_mode == PROT_IMG_TWO && pw > 0) {
+                /* pcx_a en la mitad izquierda */
+                img_y = (s16)((100 - (s16)ph) / 2 + 5);
+                img_x = (s16)((AG_SCREEN_W/2 - (s16)pw) / 2);
+                _prot_blit(g_backbuf, _prot_tmp, pw, ph, img_x, img_y, 0, 105);
+                /* pcx_b en la mitad derecha */
+                if (e->pcx_b && e->pcx_b[0]) {
+                    abuf = (u8*)engine_dat_load_gfx(e->pcx_b, &asz);
+                    if (abuf) {
+                        _pcx_decode(abuf, asz, g_pcx_decode_buf, &aw, &ah, 0);
+                        free(abuf); abuf = NULL;
+                        if (aw > 0 && ah > 0) {
+                            s16 rx = (s16)(AG_SCREEN_W/2 + (AG_SCREEN_W/2 - (s16)aw) / 2);
+                            s16 ry2 = (s16)((100 - (s16)ah) / 2 + 5);
+                            _prot_blit(g_backbuf, g_pcx_decode_buf, aw, ah,
+                                       rx, ry2, 0, 105);
+                        }
+                    }
+                }
+            }
+        }
+
+        /* ── Pregunta y entrada ── */
+        {
+            s16 qy = 110;
+            s16 bx = 40, by = 128, bw = 240;
+            if (e->question && e->question[0]) {
+                s16 tw = engine_text_width(FONT_SMALL, e->question);
+                s16 qx = (s16)((AG_SCREEN_W - tw) / 2);
+                if (qx < 2) qx = 2;
+                /* sombra + texto */
+                engine_draw_text((s16)(qx+1), (s16)(qy+1), FONT_SMALL, 0,  0, e->question);
+                engine_draw_text(qx,           qy,           FONT_SMALL, 15, 0, e->question);
+            }
+            _vga_flip();
+
+            /* Bucle de entrada */
+            if (_prot_input(input, 63, e->input_mode, bx, by, bw)) {
+                _prot_normalize(input, norm, 64);
+                if (_prot_crc32(norm) == e->answer_crc) {
+                    done = 1;  /* CORRECTO */
+                    break;
+                }
+            }
+
+            /* Respuesta incorrecta o ESC */
+            tries++;
+            if (e->fail_action == PROT_FAIL_QUIT) {
+                engine_quit(); return;
+            }
+            if (e->max_tries > 0 && tries >= (int)e->max_tries) {
+                engine_quit(); return;
+            }
+            if (e->fail_action == PROT_FAIL_NEW && count > 1)
+                cur = (cur + 1) % count;
+            /* PROT_FAIL_SAME: cur sin cambio */
+        }
+    }
 }
 
 void engine_quit(void) {

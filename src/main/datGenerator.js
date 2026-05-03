@@ -1091,6 +1091,30 @@ export async function generateDats(gameDir, buildDir, log) {
       }
     }
 
+    // Bola de party — sprites configurables desde el módulo Personajes
+    // game.json: partyBall: { closed, open } — rutas relativas a assets/converted/objects/
+    {
+      const ballMap = [
+        { key: 'closed', id: 'party_btn'      },
+        { key: 'open',   id: 'party_btn_open' },
+      ]
+      const partyBall = game?.partyBall || {}
+      const ballAssetsDir = join(assetsDir, 'objects')
+      for (const { key, id } of ballMap) {
+        const filename = partyBall[key]
+        if (!filename) continue
+        const pcxPath = join(ballAssetsDir, filename)
+        if (!existsSync(pcxPath)) { errors.push(`PartyBall ${id}: no encontrado: ${pcxPath}`); continue }
+        try {
+          const data = readFileSync(pcxPath)
+          if (!blocks.find(b => b.id === id)) {
+            blocks.push({ id, resType: RES_TYPE.OBJECT_PCX, data })
+            safeLog(`  party ball: ${id} <- ${filename}`)
+          }
+        } catch (e) { errors.push(`PartyBall ${id}: ${e.message}`) }
+      }
+    }
+
     if (blocks.length === 0) {
       safeLog('  (sin gráficos PCX en el proyecto — DAT vacío)', 'warn')
     }

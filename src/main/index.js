@@ -493,12 +493,11 @@ ipcMain.handle('fs:remove-seq-steps', async (_event, { gameDir, removals }) => {
 ipcMain.handle('fs:resolve-pcx-name', async (_event, { gameDir, type, name }) => {
   try {
     const dir = join(gameDir, 'assets', 'converted', type)
-    let base = name.replace(/\.PCX$/i, '')
-    let candidate = base.slice(0, 8) + '.PCX'
+    const base = name.replace(/\.PCX$/i, '')
+    let candidate = base + '.PCX'
     let counter = 2
     while (existsSync(join(dir, candidate))) {
-      const suffix = String(counter)
-      candidate = base.slice(0, 8 - suffix.length) + suffix + '.PCX'
+      candidate = base + counter + '.PCX'
       counter++
     }
     return { ok: true, name: candidate, path: join(dir, candidate) }
@@ -1295,7 +1294,6 @@ ipcMain.handle('build:run', async (_event, { gameDir, mode }) => {
     const assetCount = Object.keys(buildAssetsMap).length
     log(`  assets.json: ${assetCount} PCX registrados`, 'info')
 
-    // Generar makefile temporal para Watcom
     const isDebug   = mode === 'debug' || mode === 'run'
     const isRelease = mode === 'release'
 
@@ -1311,6 +1309,34 @@ ipcMain.handle('build:run', async (_event, { gameDir, mode }) => {
       ? (path_m.isAbsolute(customBuildDir) ? customBuildDir : path_m.join(gameDir, customBuildDir))
       : buildDir
     if (!existsSync(effectiveBuildDir)) mkdirSync(effectiveBuildDir, { recursive: true })
+
+    // Release: solo copiar ficheros ya compilados → no invocar Watcom
+    if (isRelease) {
+      log(`Modo: RELEASE`, 'info')
+      log('──────────────────────────────────')
+      log('Empaquetando release desde build/…')
+      const releaseDir = path_m.join(effectiveBuildDir, 'release')
+      if (!existsSync(releaseDir)) mkdirSync(releaseDir, { recursive: true })
+      const RELEASE_EXTS = new Set(['.exe', '.dat', '.op2', '.cfg'])
+      const copied = []
+      for (const f of readdirSync(effectiveBuildDir)) {
+        const ext = path_m.extname(f).toLowerCase()
+        if (!RELEASE_EXTS.has(ext)) continue
+        const src = path_m.join(effectiveBuildDir, f)
+        const dst = path_m.join(releaseDir, f)
+        copyFileSync(src, dst)
+        copied.push(f)
+      }
+      if (copied.length === 0) {
+        log('AVISO: no se encontraron ficheros compilados en build/ — ejecuta un build normal primero.', 'warn')
+      } else {
+        log(`Release → ${releaseDir}`, 'success')
+        log(`  Ficheros: ${copied.join(', ')}`, 'info')
+      }
+      return { ok: true, elapsedMs: Date.now() - startTime }
+    }
+
+    // Generar makefile temporal para Watcom
 
     // Limpiar .obj y .DAT anteriores que pueden estar bloqueados o ser obsoletos
     try {
@@ -2082,6 +2108,27 @@ async function generateDats(gameDir, buildDir, log, useMidpak) {
     }
   }
 
+  // — Bola de party — IDs fijos que el motor busca por nombre
+  {
+    let gameJsonForBall = {}
+    try { gameJsonForBall = JSON.parse(readFileSync(path_m.join(gameDir, 'game.json'), 'utf8')) } catch (_) {}
+    const partyBall = gameJsonForBall.partyBall || {}
+    const ballMap = [
+      { key: 'closed', id: 'party_btn'      },
+      { key: 'open',   id: 'party_btn_open' },
+    ]
+    for (const { key, id } of ballMap) {
+      const filename = partyBall[key]
+      if (!filename) continue
+      const filePath = path_m.join(objDir, filename)
+      if (!existsSync(filePath)) { log(`  ⚠ party_ball ${id}: PCX no encontrado: ${filename}`, 'warn'); continue }
+      if (!gfxEntries.find(e => e.id === id)) {
+        gfxEntries.push({ id, res_type: RES_OBJECT_PCX, filePath })
+        log(`  party ball: ${id} <- ${filename}`)
+      }
+    }
+  }
+
   // — Fuentes bitmap —
   // Fuentes: van a FONTS.DAT (no a GRAPHICS.DAT)
   const fntDir = path_m.join(gameDir, 'assets', 'converted', 'fonts')
@@ -2815,6 +2862,23 @@ async function generateMainC(gameDir, audioDriver) {
       case 'CHANGE_PROTAGONIST':
         e(`${p}engine_change_protagonist("${cStr(instr.charId)}");`)
         break
+      case 'PARTY_ADD': {
+        e(`${p}engine_party_add("${cStr(instr.charId)}", _party_place_${cId(instr.charId)});`)
+        const _paChar = chars[instr.charId]
+        const _paFace = _paChar?.faceSprite || ''
+        if (_paFace) {
+          const _paFaceId = resolveAssetId(assetsMap, _paFace)
+            || ('spr_' + _paFace.replace(/\.pcx$/i, '').slice(0, 27).toUpperCase())
+          e(`${p}engine_set_char_face_sprite("${cStr(instr.charId)}", "${cStr(_paFaceId)}");`)
+        }
+        break
+      }
+      case 'PARTY_REMOVE':
+        e(`${p}engine_party_remove("${cStr(instr.charId)}");`)
+        break
+      case 'PARTY_CLEAR':
+        e(`${p}engine_party_clear();`)
+        break
       case 'PICKUP_OBJECT':
         e(`${p}engine_pickup_object("${cStr(instr.objectId)}", "${cStr(instr.verbId||'coger')}");`)
         break
@@ -3057,13 +3121,15 @@ async function generateMainC(gameDir, audioDriver) {
           const condStr = ch.condition && typeof ch.condition === 'object'
             ? JSON.stringify(ch.condition)
             : (ch.condition || '')
-          return `{ "${cStr(ch.textKey||ch.text||'')}", "${cStr(condStr)}", "${cStr(nextId)}", "${cStr(ch.charFilter||'')}" }`
+          const onceTextKey = ch.onceTextKey || ''
+          const isOnce      = ch.once ? 1 : 0
+          return `{ "${cStr(ch.textKey||ch.text||'')}", "${cStr(condStr)}", "${cStr(nextId)}", "${cStr(ch.charFilter||'')}", "${cStr(onceTextKey)}", ${isOnce} }`
         })
         opts = choiceOpts.join(', ')
         numOpts = node.choices.length
       } else if (nodeConns.length > 0) {
         const nextId = nodeConns[0].to
-        opts = `{ "", "", "${cStr(nextId)}", "" }`
+        opts = `{ "", "", "${cStr(nextId)}", "", "", 0 }`
         numOpts = 1
       } else {
         opts = '{0}'
@@ -3328,6 +3394,58 @@ async function generateMainC(gameDir, audioDriver) {
           e(`    engine_wait_all_chars();`)
           break
         }
+        case 'protection_screen': {
+          /* Calcular CRC32 de la respuesta normalizada (mismo algoritmo que _prot_crc32) */
+          const _protCrc32 = (str) => {
+            const s = str.toLowerCase().replace(/^\s+|\s+$/g, '')
+            let crc = 0xFFFFFFFF
+            for (let i = 0; i < s.length; i++) {
+              crc ^= s.charCodeAt(i)
+              for (let j = 0; j < 8; j++)
+                crc = ((crc >>> 1) ^ (0xEDB88320 & (-(crc & 1) >>> 0))) >>> 0
+            }
+            return ((crc ^ 0xFFFFFFFF) >>> 0)
+          }
+          const _pImgMap  = { none:'PROT_IMG_NONE', single:'PROT_IMG_SINGLE', halves:'PROT_IMG_HALVES', two:'PROT_IMG_TWO' }
+          const _pBgMap   = { black:'PROT_BG_BLACK', color:'PROT_BG_COLOR',   pcx:'PROT_BG_PCX' }
+          const _pFailMap = { same:'PROT_FAIL_SAME', new:'PROT_FAIL_NEW',      quit:'PROT_FAIL_QUIT' }
+          const _pInpMap  = { text:'PROT_TEXT', digits:'PROT_DIGITS', alphanum:'PROT_ALPHANUM' }
+          const _pcrcVal  = _protCrc32(step.answer || '')
+          const _pImgMode = _pImgMap[step.imgMode||'none']  || 'PROT_IMG_NONE'
+          const _pBgMode  = _pBgMap[step.bgMode||'black']   || 'PROT_BG_BLACK'
+          const _pFail    = _pFailMap[step.failAction||'same'] || 'PROT_FAIL_SAME'
+          const _pInp     = _pInpMap[step.inputMode||'text']   || 'PROT_TEXT'
+          const _pPcxA    = step.pcxA  ? (resolveAssetId(assetsMap, step.pcxA)  || cStr(step.pcxA))  : ''
+          const _pPcxB    = step.pcxB  ? (resolveAssetId(assetsMap, step.pcxB)  || cStr(step.pcxB))  : ''
+          const _pPcxBg   = step.pcxBg ? (resolveAssetId(assetsMap, step.pcxBg) || cStr(step.pcxBg)) : ''
+          const _pBgColor = (step.bgColor|0)
+          const _pMaxTries = (step.maxTries|0)
+          const _pQ       = cStr(step.question || '')
+          const _pStepId  = cId(step.id || String(Date.now()))
+          e(`    { static const ProtEntry _pe_${_pStepId}[] = {{`)
+          e(`        "${_pQ}", "${_pPcxA}", "${_pPcxB}", "${_pPcxBg}",`)
+          e(`        0x${_pcrcVal.toString(16).toUpperCase().padStart(8,'0')}UL,`)
+          e(`        ${_pInp}, ${_pImgMode}, ${_pBgMode}, ${_pBgColor}, ${_pFail}, ${_pMaxTries}`)
+          e(`    }}; engine_protection_screen(_pe_${_pStepId}, 1); }`)
+          break
+        }
+        case 'party_join': {
+          e(`    engine_party_add("${cStr(step.charId)}", _party_place_${cId(step.charId)});`)
+          const _pjChar = chars[step.charId]
+          const _pjFace = _pjChar?.faceSprite || ''
+          if (_pjFace) {
+            const _pjFaceId = resolveAssetId(assetsMap, _pjFace)
+              || ('spr_' + _pjFace.replace(/\.pcx$/i, '').slice(0, 27).toUpperCase())
+            e(`    engine_set_char_face_sprite("${cStr(step.charId)}", "${cStr(_pjFaceId)}");`)
+          }
+          break
+        }
+        case 'party_leave':
+          e(`    engine_party_remove("${cStr(step.charId)}");`)
+          break
+        case 'party_clear':
+          e(`    engine_party_clear();`)
+          break
         default:
           e(`    /* TODO: paso de secuencia no soportado: ${t} */`)
       }
@@ -3893,21 +4011,11 @@ async function generateMainC(gameDir, audioDriver) {
       e('')
     }
   }
-  // Party de protagonistas — registrar todos los isProtagonist=true
+  // Colores de UI — party popup, diálogos, verbos, menú
+  // La party se gestiona exclusivamente por script (party_join / party_leave)
   {
     const protagonists = charIds.filter(id => chars[id]?.isProtagonist)
     if (protagonists.length > 0) {
-      e(`    /* Party de protagonistas */`)
-      for (const id of protagonists) {
-        const ch = chars[id]
-        e(`    engine_party_add("${cStr(id)}", _party_place_${cId(id)});`)
-        const rawFace = ch.faceSprite || ''
-        if (rawFace) {
-          const faceId = resolveAssetId(assetsMap, rawFace)
-            || ('spr_' + rawFace.replace(/\.pcx$/i, '').slice(0, 27).toUpperCase())
-          e(`    engine_set_char_face_sprite("${cStr(id)}", "${cStr(faceId)}");`)
-        }
-      }
       // Colores del popup de party (de game.json -> partyPopup)
       const pp = game.partyPopup || {}
       const hasCols = pp.colorBg !== undefined || pp.colorBorder !== undefined

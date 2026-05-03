@@ -77,10 +77,12 @@ typedef struct {
 
 /* — Nodo de diálogo (generado en main.c) ----------------------------------- */
 typedef struct {
-    const char* text_key;     /* localeKey para la opción */
-    const char* condition;    /* condición como string serializado, "" = siempre */
-    const char* next_node_id; /* id del nodo siguiente, "" = fin */
-    const char* char_filter;  /* "" = visible a todos; id de personaje = solo para ese protagonista */
+    const char* text_key;      /* localeKey para la opción */
+    const char* condition;     /* condición como string serializado, "" = siempre */
+    const char* next_node_id;  /* id del nodo siguiente, "" = fin */
+    const char* char_filter;   /* "" = visible a todos; id de personaje = solo para ese protagonista */
+    const char* text_key_once; /* texto alternativo que se muestra SOLO la primera vez; "" = sin alternativo */
+    u8          once;          /* 1 = ocultar esta opción tras elegirla por primera vez */
 } DialogueOption;
 
 #define MAX_DIALOGUE_LINES 4   /* líneas simultáneas por nodo */
@@ -508,10 +510,45 @@ void engine_block_exit(void);
 /* Funciones de audio — declaradas en agemki_audio.h */
 #include "agemki_audio.h"
 
-/* ?? Di?logos ?????????????????????????????????????????????????????????????? */
+/* ── Diálogos ─────────────────────────────────────────────────────────────── */
 
-/* Ejecuta un ?rbol de di?logo. Bloqueante hasta que el jugador llega a un nodo fin. */
+/* Ejecuta un árbol de diálogo. Bloqueante hasta que el jugador llega a un nodo fin. */
 void engine_run_dialogue(const DialogueNode* nodes, int n, const char* start_node_id);
+
+/* ── Pantalla de Protección ─────────────────────────────────────────────── */
+#define PROT_TEXT      0
+#define PROT_DIGITS    1
+#define PROT_ALPHANUM  2
+
+#define PROT_IMG_NONE   0
+#define PROT_IMG_HALVES 1
+#define PROT_IMG_SINGLE 2
+#define PROT_IMG_TWO    3
+
+#define PROT_BG_BLACK  0
+#define PROT_BG_COLOR  1
+#define PROT_BG_PCX    2
+
+#define PROT_FAIL_SAME  0
+#define PROT_FAIL_NEW   1
+#define PROT_FAIL_QUIT  2
+
+typedef struct {
+    const char* question;
+    const char* pcx_a;
+    const char* pcx_b;
+    const char* pcx_bg;
+    u32  answer_crc;
+    u8   input_mode;
+    u8   img_mode;
+    u8   bg_mode;
+    u8   bg_color;
+    u8   fail_action;
+    u8   max_tries;
+} ProtEntry;
+
+/* Pantalla de protección anticopia. Bloqueante hasta que el jugador acierta. */
+void engine_protection_screen(const ProtEntry* entries, int count);
 
 /* ?? Timing ???????????????????????????????????????????????????????????????? */
 

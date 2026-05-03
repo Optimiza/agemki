@@ -721,6 +721,37 @@ function NodeInspector({ node, dialogue, gameDir, chars, objects, onUpdate, onDe
                             {chars.map(c => <option key={c.id} value={c.id}>{getCharName(c.id)}</option>)}
                           </select>
                         </div>
+                        {/* Opciones de uso único */}
+                        <div style={{ display:'flex', gap:'8px', alignItems:'center', marginTop:'4px', flexWrap:'wrap' }}>
+                          <label style={{ display:'flex', alignItems:'center', gap:'4px', fontSize:'10px', cursor:'pointer', userSelect:'none' }}>
+                            <input type="checkbox"
+                              checked={!!ch.once}
+                              onChange={e => {
+                                const choices = node.choices.map((c, i) => i === idx ? { ...c, once: e.target.checked } : c)
+                                onUpdate(node.id, { choices })
+                              }} />
+                            <span style={{ color: ch.once ? '#f59e0b' : 'inherit' }}>una sola vez (desaparece)</span>
+                          </label>
+                        </div>
+                        {/* Texto primera vez — solo si no es once puro */}
+                        {!ch.once && (
+                          <div style={{ marginTop:'4px' }}>
+                            <div style={{ fontSize:'10px', color:'rgba(148,163,184,0.6)', marginBottom:'2px' }}>
+                              Texto primera vez (vacío = sin alternativo):
+                            </div>
+                            <input type="text"
+                              placeholder={`Primera vez [${activeLang}]`}
+                              value={t(ch.onceTextKey || `dlg.${dialogue.id}.${ch.id}.once`)}
+                              onChange={e => {
+                                const key = ch.onceTextKey || `dlg.${dialogue.id}.${ch.id}.once`
+                                setT(key, e.target.value)
+                                if (!ch.onceTextKey) {
+                                  const choices = node.choices.map((c, i) => i === idx ? { ...c, onceTextKey: key } : c)
+                                  onUpdate(node.id, { choices })
+                                }
+                              }} />
+                          </div>
+                        )}
                         {connected ? (
                           <div style={{ fontSize: '11px', color: '#a78bfa', padding: '2px 4px' }}>
                             → nodo <code style={{ fontSize: '10px' }}>{connected.to.slice(-8)}</code>
@@ -781,7 +812,13 @@ function NodeInspector({ node, dialogue, gameDir, chars, objects, onUpdate, onDe
                 })}
                 <button className="btn-ghost dlg-add-choice" onClick={() => {
                   const chId = `ch_${Date.now()}`
-                  const newCh = { id: chId, textKey: `dlg.${dialogue.id}.${chId}`, condition: null }
+                  const newCh = {
+                    id: chId,
+                    textKey: `dlg.${dialogue.id}.${chId}`,
+                    onceTextKey: `dlg.${dialogue.id}.${chId}.once`,
+                    once: false,
+                    condition: null,
+                  }
                   onUpdate(node.id, { choices: [...(node.choices || []), newCh] })
                 }}>＋ Añadir opción</button>
               </div>
