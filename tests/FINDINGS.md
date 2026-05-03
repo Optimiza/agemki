@@ -6,12 +6,13 @@ seguridad: cada vez que un test no encajaba con lo que esperaba, había
 que entender por qué — y a veces el "por qué" era un bug latente que
 nadie había disparado todavía.
 
-Cinco cosas en total: **cuatro bugs reales** (3 con fix incluido, 1 que
-requiere decisión tuya), y **un falso positivo (F-02)** que reporté como
-bug pero al verificarlo en Terminal nativa no era. Ninguna te bloquea
-hoy mismo; las verdaderas las descubrió la suite haciendo su trabajo, y
-la falsa la descubrí yo metiendo la pata — ambas cosas están aquí
-documentadas porque la honestidad importa más que la apariencia.
+Siete cosas en total: **seis bugs reales** (cuatro con fix incluido en
+este PR, dos abiertos que requieren decisión tuya), y **un falso
+positivo (F-02)** que reporté como bug pero al verificarlo en Terminal
+nativa no era. Ninguna te bloquea hoy mismo; las verdaderas las
+descubrió la suite haciendo su trabajo, y la falsa la descubrí yo
+metiendo la pata — ambas cosas están aquí documentadas porque la
+honestidad importa más que la apariencia.
 
 Cada finding tiene:
 - **Resumen en cristiano** — qué pasa, sin tecnicismos.
@@ -36,6 +37,7 @@ Cada finding tiene:
 | F-04 | Alta | Codegen DAT | ✅ aplicado en commit `fix(dat,build)` | Sí, en este PR |
 | F-05 | Crítica | Codegen DAT | ✅ aplicado en commit `fix(dat,build)` | Sí, en este PR |
 | F-06 | Media | Motor (walkmap) | abierto | No — requiere tu decisión sobre walkmaps no-rectangulares |
+| F-07 | Baja  | Tooling (git)   | ✅ aplicado en commit `fix(.gitignore)` | Sí, en este PR |
 
 Severidad:
 - **Crítica**: el motor falla silenciosamente en runtime.
@@ -585,6 +587,73 @@ helpers que sí existen (`_walk_passable`, `_heuristic`).
 
 ---
 
+## F-07 — `.gitignore` con comentario inline en patrón `*.dSYM/`
+
+**Severidad:** Baja · **Estado:** ✅ aplicado · **Fix incluido:** Sí (en este PR)
+
+### Resumen en cristiano
+
+Al añadir reglas para los artefactos de debug del runner host (clang en
+mac genera `runner.dSYM/`, MSVC en Windows genera `.pdb` y `.ilk`),
+puse el comentario explicativo **en la misma línea** que el patrón:
+
+```gitignore
+tests/engine_host/*.dSYM/      # debug symbols dir generado por clang en mac
+```
+
+Eso **no es válido en `.gitignore`**. A diferencia de muchos otros
+formatos, gitignore no soporta comentarios inline: el `#` solo
+funciona si está al inicio de la línea. La regla queda como un patrón
+literal `tests/engine_host/*.dSYM/      # debug symbols dir generado por clang en mac`,
+que jamás va a coincidir con nada. Resultado: `runner.dSYM/` se cuela
+en `git status` cada vez que clang genera símbolos, contaminando el
+working tree de cualquier contributor en mac.
+
+### Reproducción
+
+```bash
+node tests/engine_host/build.mjs --force
+git status --short      # tests/engine_host/runner.dSYM/ aparece como untracked
+git check-ignore -v tests/engine_host/runner.dSYM/   # NO IGNORED
+```
+
+### Impacto
+
+Cosmético, pero molesto:
+
+- `git status` siempre con ruido.
+- Riesgo de hacer `git add .` y commitear símbolos de debug por error
+  (un `runner.dSYM/` típico ocupa varios MB).
+- Cualquier hook que dependa de "working tree limpio" se confunde.
+
+### Fix
+
+Cada comentario en su propia línea:
+
+```gitignore
+# debug symbols dir generado por clang en mac
+tests/engine_host/*.dSYM/
+# debug symbols Windows
+tests/engine_host/*.pdb
+# incremental linker artifacts Windows
+tests/engine_host/*.ilk
+```
+
+Aplicado en commit `fix(.gitignore): los comentarios inline no son válidos`.
+
+### Lección para Claude (yo)
+
+Lo introduje yo en una sesión anterior por escribir reglas + comentarios
+de un golpe sin probar. **Verificar siempre con
+`git check-ignore -v <ruta>`** después de añadir reglas — es la única
+forma de saber si la regla aplica de verdad.
+
+### Para ti, ahora mismo
+
+Nada. Ya está arreglado en este PR.
+
+---
+
 ## Plan de commits sugerido
 
 Estos hallazgos sugieren cuatro commits separables. El orden recomendado:
@@ -621,6 +690,9 @@ Cada vez que algo no encajaba, bisección + lectura del código.
   `generateDats()` desde un test.
 - F-05 detectado por un assertion `indexIsSorted` en el test de estructura
   semántica (chunks deben venir ordenados — del comentario en la spec).
+- F-07 detectado al ver `runner.dSYM/` en `git status` después de
+  compilar el runner; `git check-ignore -v` confirmó que el patrón
+  con comentario inline no se aplicaba.
 
 Filosofía: **goldens no como ritual, sino como red real de seguridad**.
 

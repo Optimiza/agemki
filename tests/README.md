@@ -12,20 +12,51 @@ lógica observable rompa al menos un test**.
 
 ## Índice
 
-1. [Convención de idioma](#convención-de-idioma-mandatorio)
-2. [Quickstart](#quickstart)
-3. [Comandos del día a día](#comandos-del-día-a-día)
-4. [Layout completo](#layout-completo)
-5. [Qué cubre cada fichero de test](#qué-cubre-cada-fichero-de-test)
-6. [Cómo funciona el hook PostToolUse](#cómo-funciona-el-hook-posttooluse)
-7. [Cómo funciona el skill `/golden-update`](#cómo-funciona-el-skill-golden-update)
-8. [Cómo añadir un test nuevo](#cómo-añadir-un-test-nuevo)
-9. [Cómo añadir o modificar un fixture](#cómo-añadir-o-modificar-un-fixture)
-10. [Cómo regenerar los goldens (workflow seguro)](#cómo-regenerar-los-goldens-workflow-seguro)
-11. [Troubleshooting](#troubleshooting)
-12. [Por qué este diseño](#por-qué-este-diseño)
-13. [Pipeline DOSBox-X (futuro, Phase 3)](#pipeline-dosbox-x-futuro-phase-3)
-14. [Referencias](#referencias)
+1. [Estado actual del trabajo](#estado-actual-del-trabajo)
+2. [Convención de idioma](#convención-de-idioma-mandatorio)
+3. [Quickstart](#quickstart)
+4. [Comandos del día a día](#comandos-del-día-a-día)
+5. [Layout completo](#layout-completo)
+6. [Qué cubre cada fichero de test](#qué-cubre-cada-fichero-de-test)
+7. [Cómo funciona el hook PostToolUse](#cómo-funciona-el-hook-posttooluse)
+8. [Cómo funciona el skill `/golden-update`](#cómo-funciona-el-skill-golden-update)
+9. [Cómo añadir un test nuevo](#cómo-añadir-un-test-nuevo)
+10. [Cómo añadir o modificar un fixture](#cómo-añadir-o-modificar-un-fixture)
+11. [Cómo regenerar los goldens (workflow seguro)](#cómo-regenerar-los-goldens-workflow-seguro)
+12. [Troubleshooting](#troubleshooting)
+13. [Por qué este diseño](#por-qué-este-diseño)
+14. [Pipeline DOSBox-X (futuro, Phase 3)](#pipeline-dosbox-x-futuro-phase-3)
+15. [Referencias](#referencias)
+
+---
+
+## Estado actual del trabajo
+
+Lo que está terminado, lo que viene y por qué — para que sepas dónde
+estamos sin tener que leer todo el `git log`.
+
+| Etapa | Qué cubre | Estado |
+|-------|-----------|--------|
+| Phase 1 — Stores | 10 stores Zustand: state shape + acciones + IPC mocks | ✅ 178 tests |
+| Phase 2 — Codegen DAT | `game.json → .DAT` byte-equal contra goldens, validación de cabecera AGMK + orden de chunks | ✅ 26 tests |
+| Phase 3a sub 2.1 — CRC32 | Driver de motor host (clang) + `_sfx_crc32` byte-exact JS↔C | ✅ 22 tests |
+| Phase 3a sub 2.2 — PCX RLE | `_pcx_decode` (sección RLE, sin VGA) byte-exact JS↔C + 6 PCX golden | ✅ 16 tests |
+| Phase 3a sub 2.3 — A* | `engine_astar` + helpers: drift + 50 casos comportamiento + manifest deterministas | ✅ 54 tests |
+| Phase 3a sub 2.4 — Lightmap blur | El módulo de lighting del motor (último portable) | 🔜 siguiente |
+| Phase 3b — DOSBox-X build | Compilación Watcom autónoma desde Node, captura de logs | ⏳ pendiente |
+| Phase 3c — Runtime BMP | Captura de frames en puntos deterministas del game loop | ⏳ pendiente |
+
+**Total ahora mismo**: **311 tests** verde en mac+windows × Node 22+24
+(matrix CI). Tiempo total `npm test`: ~10 segundos.
+
+**Hallazgos**: 7 documentados en [`tests/FINDINGS.md`](FINDINGS.md). Cuatro
+con fix aplicado en este PR (F-01, F-04, F-05, F-07), dos abiertos
+esperando tu decisión (F-03 documentación, F-06 polígonos walkmap), uno
+descartado como falso positivo mío (F-02).
+
+**Próximo paso (cuando retome)**: Sub 2.4 (lightmap blur). Una vez
+cerrado, pasamos a Phase 3b (DOSBox-X build pipeline) que ya no necesita
+clang — ejecuta el motor real con tu Watcom y captura logs.
 
 ---
 
@@ -129,6 +160,9 @@ npm run goldens:update
 
 # Regenerar los fixtures binarios (PCX, MIDI, WAV) desde el builder
 node tests/fixtures/builder.mjs
+
+# Regenerar los walkmaps binarios para los tests de A* (sub 2.3)
+node tests/fixtures/walkmaps-builder.mjs
 ```
 
 Para entender qué dispara cada cambio automáticamente, ver
@@ -151,6 +185,8 @@ agemki/
 │   │
 │   ├── fixtures/           ← inputs deterministas para los tests
 │   │   ├── builder.mjs          script que regenera los binarios PCX/MIDI/WAV + JSON
+│   │   ├── walkmaps-builder.mjs script que regenera los 5 walkmaps binarios para A* (sub 2.3)
+│   │   ├── walkmaps/            5 .bin (room_open, room_with_obstacle, corridor_l, maze_simple, disconnected)
 │   │   ├── minimal/             1 room, 1 char, 1 idioma — ejercita cada serializer
 │   │   │   ├── game.json
 │   │   │   ├── rooms/room_001/room.json
@@ -188,7 +224,8 @@ agemki/
 │   └── engine_host/        ← Phase 3a — runner C compilado con clang en host
       ├── lib/
       │   ├── crc32.c          copia byte-exact de _sfx_crc32 (sub 2.1)
-      │   └── pcx_decode.c     copia byte-exact de _pcx_decode RLE (sub 2.2)
+      │   ├── pcx_decode.c     copia byte-exact de _pcx_decode RLE (sub 2.2)
+      │   └── astar.c          copia byte-exact del bloque A* (sub 2.3)
       ├── include/ag_test.h    header compartido del runner
       ├── runner.c             entrypoint con dispatcher de tests
       ├── build.mjs            compila con clang (cross-platform mac/win)
@@ -203,7 +240,8 @@ agemki/
 │   │       ├── FONTS.DAT
 │   │       └── manifest.json    sha256 + size + numBlocks por DAT
 │   ├── engine/             outputs binarios de lógica pura del motor host
-│   │   └── pcx/                SHA-256 de cada PCX decodificado (sub 2.2)
+│   │   ├── pcx/                SHA-256 de cada PCX decodificado (sub 2.2)
+│   │   └── astar/              manifest.json con { id, len, sha256 } por caso A* (sub 2.3)
 │   └── runtime/            (futuro Phase 3c) BMP frames del motor en DOSBox-X
 │                            capturados en puntos deterministas del game loop
 │
@@ -294,6 +332,54 @@ Por qué hex en stdout y no bytes raw: en Windows, stdout tiene
 LF→CRLF translation por defecto que corrompe bytes 0x0A. El runner
 C emite el buffer como hex (2 chars por byte) para evitar el issue
 sin parches específicos de OS.
+
+### `tests/golden/engine-host-astar.test.js` (54 tests, Phase 3a sub 2.3)
+
+Tests del pathfinding A* del motor: el bloque `_walk_passable` /
+`_snap_walkable` / `_heuristic` / `engine_astar` que vive en
+`resources/engine/agemki_engine.c:1097-1214`. Las cuatro funciones son
+puramente algorítmicas — sin tocar VGA, sin malloc, sin globals del
+loop principal — así que la copia portable en
+`tests/engine_host/lib/astar.c` es byte-exact con el motor.
+
+Cubre:
+
+- **Drift detection** (sin clang): el bloque A* en `lib/astar.c` sigue
+  byte-exact con el del motor. Cualquier cambio (orden de expansión,
+  costes 10/14, tie-breaking, radio del snap) se detecta con un solo
+  test rojo y un diff legible.
+- **Comportamiento sobre 5 walkmaps × 10 casos** (50 cases): los
+  walkmaps los genera `tests/fixtures/walkmaps-builder.mjs` y son
+  representativos de las situaciones reales en el motor:
+  - `room_open` (40×18, todo walkable): rutas directas, diagonales,
+    edges, clamping de coords fuera de grid.
+  - `room_with_obstacle`: bloque 12×6 en el centro forzando detour
+    (skirt-left, skirt-right, start dentro del bloque snapping fuera).
+  - `corridor_l`: forma de L (sólo fila inferior + columna derecha
+    walkables) — A* debe doblar.
+  - `maze_simple`: cuatro pasillos en patrón # con múltiples rutas.
+  - `disconnected`: barrera vertical completa — verifica que A*
+    devuelve 0 cuando no hay ruta.
+- **Goldens deterministas**: cada uno de los 50 casos guarda
+  `{ id, walkmap, start, target, reachable, len, sha256 }` en
+  `goldens/engine/astar/manifest.json`. El `sha256` es del raw del
+  runner (formato `N|x1,y1|…|xN,yN`), así cualquier cambio en el orden
+  de waypoints o en la ruta elegida rompe el hash.
+
+Una propiedad importante que también queda anclada: el caso
+`corr/snap-radius-cap` documenta que `_snap_walkable` está acotado a
+radio 4 celdas. Si un start cae a 7+ celdas del walkable más cercano,
+A* devuelve 0. Si Javi amplía el radio en el motor, este caso se pone
+en verde de manera "inesperada" y el test rojo de `len/sha256` lo
+avisa — un guardarraíl explícito sobre una decisión de diseño que de
+otra forma pasaría desapercibida.
+
+Por qué `astar_batch` y no spawn por caso: 50 invocaciones × ~50ms de
+spawn en Windows (vs Linux/macOS ~5ms) sumarían ~2.5s sólo en arrancar
+el binario. El batch hace una sola spawn, lee 50 líneas de stdin y
+emite 50 líneas de stdout, además cacheando el último walkmap_path
+para no releer el binario entre casos consecutivos del mismo mapa
+(reducción extra ~5×). El test corre en ~150ms en cualquier OS.
 
 ### `tests/golden/dat.test.js` (26 tests)
 
@@ -519,7 +605,7 @@ Si tocas `resources/engine/agemki_audio.c` o `agemki_engine.c`:
 
 ### Cómo añadir un nuevo módulo (el patrón)
 
-Cuando arranques una sub-etapa nueva (ej: A* en sub 2.3), el patrón:
+Sub 2.1 (CRC32), 2.2 (PCX) y 2.3 (A*) lo siguen. El patrón:
 
 1. **Localizar la función pura** en el motor. Identifica qué deps HW
    tiene (`outp/inp/int86`, globals, etc.). Si el módulo está
@@ -537,13 +623,19 @@ Cuando arranques una sub-etapa nueva (ej: A* en sub 2.3), el patrón:
    - Función `runner<Modulo>(...)` que invoca el binario y parsea
      stdout.
    - Función `js<Modulo>(...)` que reimplementa el algoritmo en JS
-     puro, sirve de referencia.
+     puro, sirve de referencia. **Opcional**: tiene sentido cuando el
+     algoritmo es lo bastante mecánico para reescribirlo sin bugs (CRC32,
+     RLE de PCX). Para algoritmos con tie-breaking sensible al orden
+     (A*), reimplementar JS aporta poco valor — basta drift + goldens.
    - Función `detect<Modulo>Drift()` con la regex que extrae el
      bloque del motor real y lo compara con la copia local.
 6. **Test vitest** en `tests/golden/engine-host-<modulo>.test.js`
    con tres bloques:
    - `describe('drift detection (sin clang)', ...)` — independiente.
-   - `describe.skipIf(noClang)('bit-exact con JS', ...)` — el grueso.
+   - `describe.skipIf(noClang)('bit-exact con JS' / 'comportamiento', ...)`
+     — el grueso. "Bit-exact con JS" si hay reimpl JS; "comportamiento"
+     si testeamos propiedades observables (ruta existe / no, longitudes
+     en rangos, primer y último waypoint coherentes).
    - `describe.skipIf(noClang)('goldens', ...)` — SHA-256 vs
      `goldens/engine/<modulo>/`.
 7. **Hook**: el matcher actual ya cubre `resources/engine/*.c|*.h`,
@@ -781,14 +873,32 @@ se generan deterministicamente desde `tests/fixtures/builder.mjs`.
    ```
 6. Commit con razón explícita.
 
+### Modificar los walkmaps (sub 2.3)
+
+Los 5 `.bin` de `tests/fixtures/walkmaps/` los genera
+`tests/fixtures/walkmaps-builder.mjs` (40×18 celdas, formato:
+`uint16 LE w`, `uint16 LE h`, `w*h bytes` con 1=walkable / 0=block).
+
+1. Edita `walkmaps-builder.mjs` (cambiar geometría, añadir un mapa nuevo).
+2. Ejecuta `node tests/fixtures/walkmaps-builder.mjs`.
+3. `npm test` fallará los SHA-256 del manifest A* — esperado.
+4. Regenera el manifest:
+   ```bash
+   UPDATE_GOLDENS=1 npm test -- tests/golden/engine-host-astar.test.js
+   ```
+5. Si añadiste un walkmap, edita `tests/golden/engine-host-astar.test.js`
+   y suma sus 10 casos al array `CASES`.
+6. Stagea fixtures + manifest + test en el mismo commit.
+
 ### Por qué los binarios están commiteados
 
-Los `.PCX`, `.MID`, `.WAV` van al repo por dos razones:
+Los `.PCX`, `.MID`, `.WAV` y los walkmap `.bin` van al repo por dos razones:
 - **Reproducibilidad**: cualquier contributor clona y testea sin pasos extra.
 - **Determinismo**: cualquier diff binario en estos ficheros es señal de
   algo raro (¿se modificó el builder sin querer?). Git lo detecta.
 
-El `builder.mjs` documenta cómo regenerarlos y mantiene la lógica visible.
+Los dos `*-builder.mjs` documentan cómo regenerarlos y mantienen la
+lógica visible.
 
 ---
 

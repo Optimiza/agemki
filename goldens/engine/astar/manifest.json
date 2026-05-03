@@ -1,0 +1,757 @@
+{
+  "schema": "engine-astar/v1",
+  "wmCellSize": 8,
+  "note": "SHA-256 del raw del runner (formato N|x,y|x,y|…). Cambiar el algoritmo (orden de expansión, costes, tie-break) altera el hash.",
+  "cases": [
+    {
+      "id": "room_open/diag-tl-br",
+      "walkmap": "room_open",
+      "start": [
+        4,
+        4
+      ],
+      "target": [
+        316,
+        140
+      ],
+      "reachable": true,
+      "len": 40,
+      "sha256": "fe8d8046e6d07ede7df251b15022f392ada2d60b460dcba04093c52d28d308f7"
+    },
+    {
+      "id": "room_open/horiz",
+      "walkmap": "room_open",
+      "start": [
+        4,
+        72
+      ],
+      "target": [
+        316,
+        72
+      ],
+      "reachable": true,
+      "len": 40,
+      "sha256": "a0b364307174e92d46460239505e2b2a7b2e2ad57f3f176fefd3a999923c6a57"
+    },
+    {
+      "id": "room_open/vert",
+      "walkmap": "room_open",
+      "start": [
+        160,
+        4
+      ],
+      "target": [
+        160,
+        140
+      ],
+      "reachable": true,
+      "len": 18,
+      "sha256": "3e7d71cb3ae248440e4531bc241eeb5588444656a9b71115b11e271f77c5be1e"
+    },
+    {
+      "id": "room_open/short-step",
+      "walkmap": "room_open",
+      "start": [
+        4,
+        4
+      ],
+      "target": [
+        12,
+        4
+      ],
+      "reachable": true,
+      "len": 2,
+      "sha256": "0456aaa39305e82fb09e3800693429bc550cdc3b5a6109efbfa87d52f14af069"
+    },
+    {
+      "id": "room_open/degenerate",
+      "walkmap": "room_open",
+      "start": [
+        40,
+        40
+      ],
+      "target": [
+        40,
+        40
+      ],
+      "reachable": true,
+      "len": 1,
+      "sha256": "1f068030099476db954d20c64042afe73a91995661778674f89fcb739f2435de"
+    },
+    {
+      "id": "room_open/quarter-q",
+      "walkmap": "room_open",
+      "start": [
+        80,
+        36
+      ],
+      "target": [
+        240,
+        108
+      ],
+      "reachable": true,
+      "len": 21,
+      "sha256": "c5ab444f17da1fd38544851e51a6b0d1b452eef0facb26c9b33c207969441a46"
+    },
+    {
+      "id": "room_open/anti-diag",
+      "walkmap": "room_open",
+      "start": [
+        316,
+        4
+      ],
+      "target": [
+        4,
+        140
+      ],
+      "reachable": true,
+      "len": 40,
+      "sha256": "fc686289bed59b159f3e65ef0259abb2e600eb6d750e0bb020dd999ad3394fe0"
+    },
+    {
+      "id": "room_open/mid-tiny",
+      "walkmap": "room_open",
+      "start": [
+        152,
+        68
+      ],
+      "target": [
+        168,
+        76
+      ],
+      "reachable": true,
+      "len": 3,
+      "sha256": "087f297c42a5764d1c94eb63a6ad8c68cb1da2922683cfe2b9282ebde8c2abf9"
+    },
+    {
+      "id": "room_open/clamp-oob",
+      "walkmap": "room_open",
+      "start": [
+        -100,
+        72
+      ],
+      "target": [
+        1000,
+        72
+      ],
+      "reachable": true,
+      "len": 40,
+      "sha256": "a0b364307174e92d46460239505e2b2a7b2e2ad57f3f176fefd3a999923c6a57"
+    },
+    {
+      "id": "room_open/half-diag",
+      "walkmap": "room_open",
+      "start": [
+        60,
+        60
+      ],
+      "target": [
+        260,
+        100
+      ],
+      "reachable": true,
+      "len": 26,
+      "sha256": "f8de24ab3a806f014df188835f17e9221efd2f16ec385cc6a7fc7b4b375f64cd"
+    },
+    {
+      "id": "obs/around-h",
+      "walkmap": "room_with_obstacle",
+      "start": [
+        40,
+        72
+      ],
+      "target": [
+        280,
+        72
+      ],
+      "reachable": true,
+      "len": 31,
+      "sha256": "fe874041d32517ada9aa1bd5932a801a8f4d41e65b56382234e13df1ee877ba0"
+    },
+    {
+      "id": "obs/diag-through",
+      "walkmap": "room_with_obstacle",
+      "start": [
+        40,
+        40
+      ],
+      "target": [
+        280,
+        108
+      ],
+      "reachable": true,
+      "len": 31,
+      "sha256": "d7f3180c511f18a838337d3cd3f37b91f7dad7997142f2d712cb7706152e00c3"
+    },
+    {
+      "id": "obs/above-block",
+      "walkmap": "room_with_obstacle",
+      "start": [
+        40,
+        20
+      ],
+      "target": [
+        280,
+        20
+      ],
+      "reachable": true,
+      "len": 31,
+      "sha256": "f2c567cccb38c04538dee11c1a2e8164406b5f5881c15c27cbb158bd2d386e84"
+    },
+    {
+      "id": "obs/below-block",
+      "walkmap": "room_with_obstacle",
+      "start": [
+        40,
+        120
+      ],
+      "target": [
+        280,
+        120
+      ],
+      "reachable": true,
+      "len": 31,
+      "sha256": "e5f3cdbf9f5e3e2448d0ae29b9ac24d9b9daa5bc3764cf155c71e8ea3b7564c8"
+    },
+    {
+      "id": "obs/start-in-block",
+      "walkmap": "room_with_obstacle",
+      "start": [
+        160,
+        76
+      ],
+      "target": [
+        40,
+        40
+      ],
+      "reachable": true,
+      "len": 13,
+      "sha256": "456eebf639a9aacfa495f1980c1ff586c16e00a4745cbb623f5e91ef71f41771"
+    },
+    {
+      "id": "obs/corner-detour",
+      "walkmap": "room_with_obstacle",
+      "start": [
+        4,
+        40
+      ],
+      "target": [
+        316,
+        108
+      ],
+      "reachable": true,
+      "len": 40,
+      "sha256": "05173ef5d75965096ff9e34a442752b7b0ca43dabbea70fdff944645df331d38"
+    },
+    {
+      "id": "obs/skirt-left",
+      "walkmap": "room_with_obstacle",
+      "start": [
+        60,
+        72
+      ],
+      "target": [
+        200,
+        72
+      ],
+      "reachable": true,
+      "len": 22,
+      "sha256": "95f7f088e3fd1be3a33cac4ef202806a38bb19df997f6ec8bb213781bfb622c5"
+    },
+    {
+      "id": "obs/skirt-right",
+      "walkmap": "room_with_obstacle",
+      "start": [
+        60,
+        72
+      ],
+      "target": [
+        260,
+        72
+      ],
+      "reachable": true,
+      "len": 26,
+      "sha256": "bf6ba556c2715335003392b4f2c341b9f5a87625830c151148cf5aaf60c9b6b1"
+    },
+    {
+      "id": "obs/squeeze",
+      "walkmap": "room_with_obstacle",
+      "start": [
+        96,
+        52
+      ],
+      "target": [
+        224,
+        92
+      ],
+      "reachable": true,
+      "len": 21,
+      "sha256": "c46d1e081d6a0b4816d8175c0036b1e6d1e0348fa6cd4812acfd45afb7b92729"
+    },
+    {
+      "id": "obs/target-in-block",
+      "walkmap": "room_with_obstacle",
+      "start": [
+        4,
+        4
+      ],
+      "target": [
+        160,
+        76
+      ],
+      "reachable": true,
+      "len": 18,
+      "sha256": "d97e8e77e1fbcda00504c7ab1bb895b84f084f2a0cbc59ed59ed61d3736633d0"
+    },
+    {
+      "id": "corr/start-elbow",
+      "walkmap": "corridor_l",
+      "start": [
+        4,
+        128
+      ],
+      "target": [
+        308,
+        128
+      ],
+      "reachable": true,
+      "len": 39,
+      "sha256": "f9b1af2486d5980a2a2f30e8ccd502a37f835269e3cc31e6d24545fc9582c649"
+    },
+    {
+      "id": "corr/elbow-top",
+      "walkmap": "corridor_l",
+      "start": [
+        308,
+        128
+      ],
+      "target": [
+        308,
+        4
+      ],
+      "reachable": true,
+      "len": 17,
+      "sha256": "5381d2d21da65fbfd06f5e6997946247b1d6e486c0a516baa55ef5da29305800"
+    },
+    {
+      "id": "corr/full-l",
+      "walkmap": "corridor_l",
+      "start": [
+        4,
+        128
+      ],
+      "target": [
+        308,
+        4
+      ],
+      "reachable": true,
+      "len": 54,
+      "sha256": "a8b01a4f38b65c6cbabed4637ce20d7efac9c26249d23e6cccbf79f00a28c5ed"
+    },
+    {
+      "id": "corr/snap-radius-cap",
+      "walkmap": "corridor_l",
+      "start": [
+        160,
+        72
+      ],
+      "target": [
+        308,
+        4
+      ],
+      "reachable": false,
+      "len": 0,
+      "sha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    {
+      "id": "corr/degenerate",
+      "walkmap": "corridor_l",
+      "start": [
+        4,
+        128
+      ],
+      "target": [
+        4,
+        128
+      ],
+      "reachable": true,
+      "len": 1,
+      "sha256": "2e5a1a63eeb8db9b38c0169fb2e5502d5a9ff41ed7144aeaa750d57a6f75340f"
+    },
+    {
+      "id": "corr/mid-bot-right-mid",
+      "walkmap": "corridor_l",
+      "start": [
+        160,
+        128
+      ],
+      "target": [
+        308,
+        72
+      ],
+      "reachable": true,
+      "len": 25,
+      "sha256": "e082201fe29c38ea08d18d91e20763a6f685456da070f3f35bdac9d5a2dd6998"
+    },
+    {
+      "id": "corr/end-to-start",
+      "walkmap": "corridor_l",
+      "start": [
+        308,
+        4
+      ],
+      "target": [
+        4,
+        128
+      ],
+      "reachable": true,
+      "len": 54,
+      "sha256": "6c75fb047f7d66a37d4327c6301ec272e924355e630111e740a7561ae4de8896"
+    },
+    {
+      "id": "corr/small-step-row",
+      "walkmap": "corridor_l",
+      "start": [
+        4,
+        128
+      ],
+      "target": [
+        12,
+        128
+      ],
+      "reachable": true,
+      "len": 2,
+      "sha256": "f0666401127ea00e7409d7310e11180d7015335a7d199cd0d88fb637fb4ef2d1"
+    },
+    {
+      "id": "corr/small-step-col",
+      "walkmap": "corridor_l",
+      "start": [
+        308,
+        4
+      ],
+      "target": [
+        308,
+        12
+      ],
+      "reachable": true,
+      "len": 2,
+      "sha256": "af00a4fea49e762684042401e0f1a2970c731e70374bf79649ee65e7b45ead8d"
+    },
+    {
+      "id": "corr/far-row",
+      "walkmap": "corridor_l",
+      "start": [
+        4,
+        128
+      ],
+      "target": [
+        308,
+        140
+      ],
+      "reachable": true,
+      "len": 39,
+      "sha256": "f21db33066cadf406cc468c2cdffd3021d675a7c312201646b10700864298dc7"
+    },
+    {
+      "id": "maze/across-top",
+      "walkmap": "maze_simple",
+      "start": [
+        4,
+        36
+      ],
+      "target": [
+        316,
+        36
+      ],
+      "reachable": true,
+      "len": 40,
+      "sha256": "77b005d26f174323f84d8b81041778cc18bd759eaa6ba865bd3cccb81995bd67"
+    },
+    {
+      "id": "maze/across-bot",
+      "walkmap": "maze_simple",
+      "start": [
+        4,
+        108
+      ],
+      "target": [
+        316,
+        108
+      ],
+      "reachable": true,
+      "len": 40,
+      "sha256": "776b155da59c88a181cae79210b79e926cdfe98238995f97c4f4363b350f6ea9"
+    },
+    {
+      "id": "maze/left-vert",
+      "walkmap": "maze_simple",
+      "start": [
+        68,
+        4
+      ],
+      "target": [
+        68,
+        140
+      ],
+      "reachable": true,
+      "len": 18,
+      "sha256": "9718a69016acb61348919f697093504f5fe3cd39014a334c3e80a9f5ae764c24"
+    },
+    {
+      "id": "maze/right-vert",
+      "walkmap": "maze_simple",
+      "start": [
+        244,
+        4
+      ],
+      "target": [
+        244,
+        140
+      ],
+      "reachable": true,
+      "len": 18,
+      "sha256": "fb7b786adbeb72547d64e4ced847ef21526b6b0289b0f9fed57524a78a080205"
+    },
+    {
+      "id": "maze/tl-to-br-cross",
+      "walkmap": "maze_simple",
+      "start": [
+        68,
+        36
+      ],
+      "target": [
+        244,
+        108
+      ],
+      "reachable": true,
+      "len": 31,
+      "sha256": "a37b18ba92e59292420349b8aa2500ce2e8916b55f89257fe0b12e9ab3c2f1d9"
+    },
+    {
+      "id": "maze/cross-cross",
+      "walkmap": "maze_simple",
+      "start": [
+        68,
+        108
+      ],
+      "target": [
+        244,
+        36
+      ],
+      "reachable": true,
+      "len": 31,
+      "sha256": "5c1f5be068b681170d457b8bf68027cb2e0bad4c1e6ae06cc11ba5f8b4b621bc"
+    },
+    {
+      "id": "maze/snap-from-block",
+      "walkmap": "maze_simple",
+      "start": [
+        160,
+        72
+      ],
+      "target": [
+        244,
+        108
+      ],
+      "reachable": true,
+      "len": 15,
+      "sha256": "d8b4318c19aa173ae2eaceb25172ea87472cb712c40d46fb2d2aa4808746fadd"
+    },
+    {
+      "id": "maze/mid-corr-corner",
+      "walkmap": "maze_simple",
+      "start": [
+        160,
+        36
+      ],
+      "target": [
+        68,
+        108
+      ],
+      "reachable": true,
+      "len": 21,
+      "sha256": "852e393946dfb2bbeb057a2ffa2d15d5228ba44b8bdf0a68472517107c71aa5d"
+    },
+    {
+      "id": "maze/corner-corner",
+      "walkmap": "maze_simple",
+      "start": [
+        68,
+        36
+      ],
+      "target": [
+        244,
+        108
+      ],
+      "reachable": true,
+      "len": 31,
+      "sha256": "a37b18ba92e59292420349b8aa2500ce2e8916b55f89257fe0b12e9ab3c2f1d9"
+    },
+    {
+      "id": "maze/degenerate",
+      "walkmap": "maze_simple",
+      "start": [
+        68,
+        36
+      ],
+      "target": [
+        68,
+        36
+      ],
+      "reachable": true,
+      "len": 1,
+      "sha256": "9804da51b2e6c26f1d2a36951eaa954ea10a69ea1f8bae72dfdbdacc9db5fa7e"
+    },
+    {
+      "id": "disc/lr-no-path",
+      "walkmap": "disconnected",
+      "start": [
+        4,
+        72
+      ],
+      "target": [
+        316,
+        72
+      ],
+      "reachable": false,
+      "len": 0,
+      "sha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    {
+      "id": "disc/rl-no-path",
+      "walkmap": "disconnected",
+      "start": [
+        316,
+        72
+      ],
+      "target": [
+        4,
+        72
+      ],
+      "reachable": false,
+      "len": 0,
+      "sha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    {
+      "id": "disc/left-to-left",
+      "walkmap": "disconnected",
+      "start": [
+        4,
+        4
+      ],
+      "target": [
+        140,
+        140
+      ],
+      "reachable": true,
+      "len": 18,
+      "sha256": "0b3f056d57222ac2b26d9fb26bba5cc61444cceb093354b2083c10a604081462"
+    },
+    {
+      "id": "disc/right-to-right",
+      "walkmap": "disconnected",
+      "start": [
+        180,
+        4
+      ],
+      "target": [
+        316,
+        140
+      ],
+      "reachable": true,
+      "len": 18,
+      "sha256": "b2dd79b13efd38b6d9b6e6ad11c7ea9be99e11626220462168193dda936f9919"
+    },
+    {
+      "id": "disc/left-corners",
+      "walkmap": "disconnected",
+      "start": [
+        4,
+        4
+      ],
+      "target": [
+        4,
+        140
+      ],
+      "reachable": true,
+      "len": 18,
+      "sha256": "045f0bac304f7f21d90ba629512b08f093642818f6e8fb8de20296b3b8d4f48d"
+    },
+    {
+      "id": "disc/right-corners",
+      "walkmap": "disconnected",
+      "start": [
+        316,
+        4
+      ],
+      "target": [
+        316,
+        140
+      ],
+      "reachable": true,
+      "len": 18,
+      "sha256": "fe95f30888f7c7d80077656b419ab36882f04608204ac778b89a304edce77be6"
+    },
+    {
+      "id": "disc/near-wall-no-path",
+      "walkmap": "disconnected",
+      "start": [
+        152,
+        72
+      ],
+      "target": [
+        180,
+        72
+      ],
+      "reachable": false,
+      "len": 0,
+      "sha256": "5feceb66ffc86f38d952786c6d696c79c2dbc239dd4e91b46729d73a27fb57e9"
+    },
+    {
+      "id": "disc/left-mid-far",
+      "walkmap": "disconnected",
+      "start": [
+        40,
+        72
+      ],
+      "target": [
+        140,
+        40
+      ],
+      "reachable": true,
+      "len": 13,
+      "sha256": "b35307ca374c1bc246f63cf370abd30d12b0694d382ba1152f5bc04581b3a2cb"
+    },
+    {
+      "id": "disc/right-mid-far",
+      "walkmap": "disconnected",
+      "start": [
+        180,
+        72
+      ],
+      "target": [
+        300,
+        108
+      ],
+      "reachable": true,
+      "len": 16,
+      "sha256": "09203a557ce0098b344c5bb25cb1f2e8a37f5e6f4702e07e19c8ef59fa5bc10a"
+    },
+    {
+      "id": "disc/snap-into-wall",
+      "walkmap": "disconnected",
+      "start": [
+        164,
+        72
+      ],
+      "target": [
+        4,
+        72
+      ],
+      "reachable": true,
+      "len": 20,
+      "sha256": "4ed481939828225f8361bb1513f2e321be8a772f8bcdfb920c0574b29a32e0d1"
+    }
+  ]
+}

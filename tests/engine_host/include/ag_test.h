@@ -25,4 +25,16 @@ unsigned long ag_test_crc32(const char* s);
 int ag_test_pcx_decode(const uint8_t* src, uint32_t src_size,
                        uint8_t* dst, uint16_t* out_w, uint16_t* out_h);
 
+/**
+ * Pathfinding A* (subset portable del motor).
+ * Coordenadas en píxeles mundo (no celdas). El subset convierte
+ * internamente con WALKMAP_CELL_SIZE=8.
+ * Devuelve la longitud de la ruta (nº de waypoints) o 0 si no hay.
+ */
+typedef struct { int16_t x, y; } AgTestPoint;
+
+void ag_test_walkmap_load(int w, int h, const uint8_t* bm);
+int  ag_test_astar(int16_t sx, int16_t sy, int16_t tx, int16_t ty,
+                   AgTestPoint* path, int max_path);
+
 #endif

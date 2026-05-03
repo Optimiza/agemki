@@ -179,6 +179,85 @@ export function detectPcxDecodeDrift() {
 }
 
 /**
+ * Drift detection del bloque A*: extrae las 4 funciones del motor
+ * (`_walk_passable`, `_snap_walkable`, `_heuristic`, `engine_astar`)
+ * desde `agemki_engine.c` y las compara byte-a-byte con la copia local
+ * en `tests/engine_host/lib/astar.c`.
+ *
+ * Por qué bloque y no función a función: las cuatro viven contiguas en
+ * el motor (líneas 1097-1214) y se copiaron juntas. Comparar el bloque
+ * entero detecta cualquier reordenamiento o cambio interno con un solo
+ * regex y un solo error legible.
+ *
+ * @returns {{ ok: boolean, motor?: string, copy?: string, error?: string }}
+ */
+export function detectAstarDrift() {
+  const motorPath = join(REPO_ROOT, 'resources', 'engine', 'agemki_engine.c')
+  const copyPath  = join(ENGINE_HOST_DIR, 'lib', 'astar.c')
+  // Bloque desde la firma de _walk_passable hasta el cierre de engine_astar
+  // (línea con un único "}" que cierra el último return). Usamos un regex
+  // codicioso pero acotado a la firma final para no engullir nada más.
+  const re = /static int _walk_passable\(int gx, int gy\) \{[\s\S]*?\n\}\s*\n(?=\/\* ── Wrappers|\/\* =====|$)/
+  return detectFunctionDrift(motorPath, copyPath, re)
+}
+
+/**
+ * Ejecuta `runner astar <walkmap> <sx> <sy> <tx> <ty>` y devuelve la ruta
+ * cruda parseada. Si no hay ruta devuelve { len: 0, points: [], raw: '0' }.
+ *
+ * Formato del runner: una sola línea `N|x1,y1|x2,y2|…|xN,yN\n`.
+ * El campo `raw` es la stdout sin newline final — útil para hashearla
+ * directamente (los goldens guardan SHA-256 de `raw` para detectar
+ * cualquier desviación, incluyendo orden de waypoints).
+ *
+ * @param {string} walkmapFile  ruta absoluta al .bin
+ * @param {number} sx @param {number} sy @param {number} tx @param {number} ty
+ * @returns {{ len: number, points: Array<[number, number]>, raw: string }}
+ */
+export function runnerAstar(walkmapFile, sx, sy, tx, ty) {
+  const out = execFileSync(RUNNER_PATH,
+    ['astar', walkmapFile, String(sx), String(sy), String(tx), String(ty)],
+    { encoding: 'utf8' })
+  return parseAstarLine(out.trim())
+}
+
+/**
+ * Versión batch: pasa N casos por stdin como `<walkmap> <sx> <sy> <tx> <ty>`
+ * (uno por línea). Recibe N rutas en el mismo orden. El runner cachea el
+ * último walkmap_path para no recargar el binario entre casos consecutivos
+ * con el mismo mapa, lo que reduce ~5x el coste sobre 50 casos.
+ *
+ * @param {Array<{ walkmap: string, sx: number, sy: number, tx: number, ty: number }>} cases
+ * @returns {Array<{ len: number, points: Array<[number, number]>, raw: string }>}
+ */
+export function runnerAstarBatch(cases) {
+  const stdin = cases.map(c =>
+    `${c.walkmap} ${c.sx} ${c.sy} ${c.tx} ${c.ty}`
+  ).join('\n') + '\n'
+  const out = execFileSync(RUNNER_PATH, ['astar_batch'], { input: stdin, encoding: 'utf8' })
+  const lines = out.split('\n').filter(l => l.length > 0)
+  if (lines.length !== cases.length) {
+    throw new Error(`runner astar_batch: esperaba ${cases.length} líneas, recibí ${lines.length}`)
+  }
+  return lines.map(parseAstarLine)
+}
+
+function parseAstarLine(raw) {
+  // raw = "N|x1,y1|x2,y2|…|xN,yN" o "0"
+  const parts = raw.split('|')
+  const len = Number.parseInt(parts[0], 10)
+  if (!Number.isFinite(len)) throw new Error(`runner astar: línea malformada: ${raw}`)
+  const points = parts.slice(1).map(p => {
+    const [x, y] = p.split(',').map(n => Number.parseInt(n, 10))
+    return [x, y]
+  })
+  if (points.length !== len) {
+    throw new Error(`runner astar: len=${len} pero parseé ${points.length} waypoints (raw=${raw})`)
+  }
+  return { len, points, raw }
+}
+
+/**
  * Decodifica un PCX en JS puro (referencia para validar la del motor).
  * Implementa el mismo algoritmo RLE que `_pcx_decode`.
  * @param {Buffer} src
