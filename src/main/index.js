@@ -1194,7 +1194,12 @@ ipcMain.handle('build:check-tools', (_event, { gameDir, watcomDir, dosboxPath: d
     'C:\\Program Files (x86)\\DOSBox-X\\dosbox-x.exe',
     'C:\\DOSBox-X\\dosbox-x.exe',
     '/usr/bin/dosbox-x',
+    // Homebrew: /usr/local es el prefijo de los Mac Intel y /opt/homebrew el de los
+    // Apple Silicon, asi que sin este ultimo no se encontraba en ningun Mac ARM.
+    // Va ANTES del .app a proposito: los candidatos se prueban en orden y solo
+    // despues se mira el PATH, y el bundle suele ser una version mas vieja.
     '/usr/local/bin/dosbox-x',
+    '/opt/homebrew/bin/dosbox-x',
     '/Applications/dosbox-x.app/Contents/MacOS/dosbox-x',
   ].filter(Boolean)
 

@@ -30,7 +30,10 @@ const DOSBOX_CANDIDATES = [
   'C:\\Program Files\\DOSBox-X\\dosbox-x.exe',
   'C:\\Program Files (x86)\\DOSBox-X\\dosbox-x.exe',
   '/usr/bin/dosbox-x',
+  // /usr/local es el prefijo de Homebrew en Mac Intel y /opt/homebrew el de los
+  // Apple Silicon: sin el segundo no se encontraba en ningun Mac ARM.
   '/usr/local/bin/dosbox-x',
+  '/opt/homebrew/bin/dosbox-x',
   '/Applications/dosbox-x.app/Contents/MacOS/dosbox-x',
 ]
 
