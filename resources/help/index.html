@@ -564,6 +564,19 @@
   </div></div>
 </div>
 
+<div class="info">
+  <strong>¿Juegas a través de un stream remoto (Moonlight y similares)?</strong>
+  Arranca el editor con la variable de entorno <code>DOSBOX_REMOTO=1</code> (la apagan <code>0</code>,
+  <code>false</code>, <code>no</code>, <code>off</code>, vacía o sin definir; cualquier otro valor la enciende).
+  El ▶ Play lanzará DOSBox-X a <strong>pantalla completa</strong> (<code>sdl fullscreen=true</code>)
+  y con el aspecto 4:3 corregido (<code>render aspect=true</code>). Eso es lo que hace que el ratón no
+  se vaya de sitio sobre un stream: el stream manda posiciones absolutas y DOSBox-X integra deltas
+  relativos, y dentro de una ventana esos dos sistemas de coordenadas no coinciden nunca. El segundo
+  ajuste no es cosmético: <code>aspect</code> vale <code>false</code> por defecto y sin él la pantalla
+  completa estiraría la imagen. Va apagado por defecto porque en local taparía el editor.
+  El log de Build dice el modo siempre, esté activo o no.
+</div>
+
 <div class="warn">En modo debug, el juego lee los ficheros directamente de las carpetas del proyecto. No distribuyas el build de debug — usa siempre Release para el producto final.</div>
 </section>
 

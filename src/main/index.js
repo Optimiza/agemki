@@ -1266,6 +1266,69 @@ ipcMain.handle('build:open-dir', (_event, { gameDir }) => {
 })
 
 /**
+ * Construye el argv con el que se lanza DOSBox-X para jugar (modo run).
+ *
+ * @param {string|null} dosboxConf - .conf del usuario, o null para usar el de defecto
+ * @param {string} mountCmd - comando `mount` que deja el directorio de build como C:
+ * @param {Object} [env] - entorno del que se lee DOSBOX_REMOTO (inyectable para poder
+ *                         probarlo). Apagado: sin definir, vacío, 0, false, no, off;
+ *                         encendido: cualquier otro valor
+ * @returns {string[]} argv para spawn(): un elemento = un token, sin comillas de shell
+ */
+function buildDosboxArgs(dosboxConf, mountCmd, env = process.env) {
+  // Interruptor opcional para cuando se juega a través de un stream remoto (Moonlight
+  // y similares), donde el ratón se va del sitio: DOSBox-X integra deltas RELATIVOS y
+  // el stream entrega posiciones ABSOLUTAS, y dentro de una ventana esos dos sistemas
+  // de coordenadas no coinciden nunca. Son DOS ajustes, y cada uno vive en SU sección
+  // del conf (fullscreen en [sdl], aspect en [render]):
+  //   sdl fullscreen=true  ataca la causa de raíz: a pantalla completa ya no hay
+  //                        rectángulo de ventana dentro de un escritorio, así que no
+  //                        queda desajuste que corregir. La guía del ratón de DOSBox-X
+  //                        dice justo eso: el modo relativo "works well in fullscreen"
+  //                        y solo deriva "when running in a window".
+  //   render aspect=true   no es cosmético. Medido en el conf de referencia del
+  //                        2026.07.02, aspect vale false por defecto, y entonces la
+  //                        imagen (palabras del manual) "is simply scaled to full
+  //                        window/fullscreen size, possibly resulting in
+  //                        disproportional image": la pantalla completa ESTIRA el
+  //                        320x200 en vez de dejarlo 4:3 con bandas negras.
+  // Antes eran tres (maximize, mouse_emulation, usesystemcursor) y ninguno tocaba el
+  // origen del desajuste, que es la ventana. Va apagado por defecto porque la pantalla
+  // completa es justo lo contrario de lo que se quiere sentado delante de la máquina:
+  // taparía el editor.
+  //
+  // Es un INTERRUPTOR y no una cadena de flags a propósito: `-set "sdl fullscreen=true"`
+  // es UN token que contiene un espacio, y ninguna shell restaura ese entrecomillado al
+  // expandir una variable, así que unos flags guardados en el entorno llegarían partidos
+  // en tres tokens. Medido en DOSBox-X 2026.07.02: así partidos los ignora EN SILENCIO,
+  // sin error y con rc=0, que es el peor resultado posible. spawn() sin `shell` pasa cada
+  // elemento del array como un token, que es la única forma que no se puede estropear.
+  //
+  // La tabla de verdad es EXPLÍCITA: apagado con la variable sin definir, vacía, 0,
+  // false, no u off (sin distinguir mayúsculas ni espacios sobrantes), y encendido con
+  // cualquier otro valor. Antes bastaba con que la cadena no fuera vacía, y en
+  // JavaScript "0" y "false" son cadenas NO vacías: DOSBOX_REMOTO=0 ENCENDÍA el modo,
+  // justo lo contrario de lo que espera quien escribe un 0 para apagarlo.
+  const senal = String(env.DOSBOX_REMOTO ?? '').toLowerCase().replace(/\s+/g, '')
+  const remotoActivo = !['', '0', 'false', 'no', 'off'].includes(senal)
+
+  const remoto = remotoActivo
+    ? ['-set', 'sdl fullscreen=true',
+       '-set', 'render aspect=true']
+    : []
+
+  // -set gana al -conf del usuario, así que no hace falta tocar ningún .conf.
+  return [
+    ...(dosboxConf ? ['-conf', dosboxConf] : []),
+    ...remoto,
+    '-c', mountCmd,
+    '-c', 'c:',
+    '-c', 'GAME.EXE',
+    '-c', 'exit'
+  ]
+}
+
+/**
  * Ejecuta el proceso de compilación con Open Watcom.
  *
  * Modos:
@@ -1526,16 +1589,19 @@ ipcMain.handle('build:run', async (_event, { gameDir, mode }) => {
       // Montar buildDir como C: y ejecutar GAME.EXE directamente
       const buildDirDos = effectiveBuildDir.replace(/\\/g, '\\\\')
       const mountCmd = `mount c ${buildDirDos}`
-      const dosboxArgs = dosboxConf
-        ? ['-conf', dosboxConf,
-           '-c', mountCmd,
-           '-c', 'c:',
-           '-c', 'GAME.EXE',
-           '-c', 'exit']
-        : ['-c', mountCmd,
-           '-c', 'c:',
-           '-c', 'GAME.EXE',
-           '-c', 'exit']
+      const dosboxArgs = buildDosboxArgs(dosboxConf, mountCmd)
+      // El modo se anuncia leyendo el argv que se va a lanzar, no la variable de
+      // entorno: así el log no puede mentir sobre con qué se arrancó realmente. Y se
+      // anuncia SIEMPRE, en los dos casos: si solo hablara el modo remoto, un log
+      // capturado no distinguiría "corrió en local" de "la variable no llegó al
+      // proceso", y un run que se entrega para validar tiene que dejar constancia de
+      // con qué modo corrió.
+      const remoteFlags = dosboxArgs.filter((_a, i) => dosboxArgs[i - 1] === '-set')
+      if (remoteFlags.length) {
+        log(`  modo REMOTO (DOSBOX_REMOTO activo): ${remoteFlags.join(' · ')}`, 'info')
+      } else {
+        log('  modo LOCAL (DOSBOX_REMOTO apagado: ventana normal, aspecto del conf)', 'info')
+      }
       // Ejecutar DOSBox-X de forma no bloqueante (el usuario interactúa con él)
       const dosbox = spawn(dosboxExe, dosboxArgs, { detached: true, stdio: 'ignore' })
       dosbox.unref() // desvincula del proceso padre para que no bloquee

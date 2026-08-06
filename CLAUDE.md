@@ -27,6 +27,7 @@ Editor aventuras SCUMM → DOS | Electron + C/Open Watcom | Target: 486DX2@66MHz
 ## Pipeline
 `game.json → codegen → C+DAT → wcc386 -bt=dos -6r -ox → wlink dos4gw → GAME.EXE → DOSBox-X (mpu401=intelligent)`
 **Logs:** `build/build.log` | `build/watcom.log` | `build/ENGINE.LOG` | `build/AUDIO.LOG`
+**Play remoto:** `DOSBOX_REMOTO` encendida en el entorno del editor (la apagan `0`, `false`, `no`, `off`, vacía y sin definir, sin distinguir mayúsculas ni espacios; enciende cualquier otro valor) → el ▶ Play añade DOS `-set`, y OJO a la sección porque no comparten: `-set "sdl fullscreen=true"` (ataca la CAUSA del ratón a la deriva sobre Moonlight: la ventana es donde se desalinean las posiciones absolutas del stream y los deltas relativos de DOSBox-X, y a pantalla completa no hay ventana) y `-set "render aspect=true"` (NO cosmético: `aspect` vale `false` por defecto y sin él la pantalla completa ESTIRA el 320×200). Apagado por defecto: en local taparía el editor. Se construye en `buildDosboxArgs()` (`src/main/index.js`), y el log de Build anuncia el modo SIEMPRE, en los dos casos, leyendo el argv que se lanza; detalle en README.
 
 ## Top 8 Pitfalls
 1. **ISR chain roto** → `_chain_intr()` en timer.c

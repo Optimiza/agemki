@@ -88,6 +88,62 @@ mididevice=default
 dosbox-x -conf dosbox-x.conf game/GAME.EXE
 ```
 
+Desde el editor no hace falta: el botón **▶ Play** (`F7`, *Build + Run*) compila
+y lanza DOSBox-X con el `.EXE` recién generado.
+
+---
+
+## Jugar a través de un stream remoto (Moonlight y similares)
+
+El ▶ Play lanza DOSBox-X tal cual: ventana normal, que es lo que se quiere
+sentado delante de la máquina. A través de un stream remoto el puntero se va de
+sitio, porque el stream manda posiciones **absolutas** mientras DOSBox-X está
+integrando deltas relativos, y dentro de una ventana esos dos sistemas de
+coordenadas no coinciden nunca.
+
+Para esos casos hay un interruptor opcional, apagado por defecto:
+
+```bash
+DOSBOX_REMOTO=1 npm run dev     # o exportarlo antes de arrancar el editor
+```
+
+La tabla de verdad es explícita: la apagan `0`, `false`, `no`, `off`, la cadena
+vacía o no definirla (sin distinguir mayúsculas ni espacios sobrantes), y
+cualquier otro valor la enciende. Con la variable encendida, el ▶ Play añade
+**dos** ajustes al lanzamiento de DOSBox-X, y ojo a la sección porque **no
+comparten**:
+
+| Ajuste | Por qué |
+|---|---|
+| `sdl fullscreen=true` | ataca la causa de raíz: a pantalla completa ya no hay rectángulo de ventana dentro de un escritorio, así que no queda desajuste entre las posiciones absolutas del stream y los deltas relativos de DOSBox-X. Su propia guía del ratón lo dice: el modo relativo "works well in fullscreen" y solo deriva "when running in a window" |
+| `render aspect=true` | **no es cosmético.** Medido en el conf de referencia del 2026.07.02, `aspect` vale `false`, y entonces la imagen "is simply scaled to full window/fullscreen size, possibly resulting in disproportional image" (manual): la pantalla completa **estiraría** un 320×200 en vez de dejarlo 4:3 con bandas negras |
+
+Antes eran tres ajustes de `[sdl]` (`mouse_emulation=never`, `maximize=true`,
+`usesystemcursor=true`) y ninguno tocaba el origen del desajuste, que es la
+ventana.
+
+Está **apagado por defecto** porque ocupar la pantalla entera es justo lo
+contrario de lo que se quiere en local: taparía el editor.
+
+Detalles que ahorran un rato de depuración:
+
+- Los dos van con `-set`, que **gana al `.conf`** configurado en Preferencias,
+  así que no hay que editar ningún fichero de configuración.
+- Es un interruptor y no una variable con los flags dentro **a propósito**:
+  `-set "sdl fullscreen=true"` es un solo token que contiene un espacio, y
+  ninguna shell restaura ese entrecomillado al expandir una variable. Si llega
+  partido en tres tokens, DOSBox-X lo ignora **en silencio**, sin error y con
+  código de salida 0, que es el peor resultado posible.
+- La lee el proceso principal de Electron, o sea que tiene que estar en el
+  entorno con el que arranca **el editor**. Abierto desde el Finder o el Dock no
+  hereda lo que exportaste en una terminal: para esa sesión, arranca el editor
+  desde la terminal.
+- El log de Build dice el modo **siempre**, en los dos casos (`modo REMOTO
+  (DOSBOX_REMOTO activo): …` / `modo LOCAL (DOSBOX_REMOTO apagado: …)`), y lo
+  dice leyendo los flags que realmente se lanzan, no la variable. Con una sola
+  de las dos líneas, un log no distinguiría "corrió en local" de "la variable no
+  llegó al proceso".
+
 ---
 
 ## Estructura del proyecto
